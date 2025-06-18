@@ -150,11 +150,20 @@ This version moves Cloud PubSub from Tesla to Finch, so read the notes below and
   ```
 
 ### Changed
+
 - **Possible breaking change:** due to the fact that we've switched from Tesla to Finch,
   it's not longer sufficient to replace `:base_url` in `:google_api_pub_sub` config.
 
   If your app is using the emulator, instead of setting in the `config/dev.exs`:
 
+  ```elixir
+  producer: [
+    module:
+      {BroadwayCloudPubSub.Producer,
+       subscription: "projects/<your-project-id>/subscriptions/<your-subscription-id>",
+       base_url: System.get_env("PUBSUB_EMULATOR_HOST")}
+  ]
+  ```
 
 ## [0.7.1] - 2022-05-09
 
