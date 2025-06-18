@@ -150,26 +150,11 @@ This version moves Cloud PubSub from Tesla to Finch, so read the notes below and
   ```
 
 ### Changed
-- **Possible breaking change:** due to the fact that we're switched here from Tesla to Finch,
+- **Possible breaking change:** due to the fact that we've switched from Tesla to Finch,
   it's not longer sufficient to replace `:base_url` in `:google_api_pub_sub` config.
 
-  Since we're no longer reusing the same Tesla connection underneath, if your app is using the emulator,
-  instead of setting in the `config/dev.exs`:
-  ```
-  config :google_api_pub_sub, :base_url, System.get_env("PUBSUB_EMULATOR_HOST")
-  ```
+  If your app is using the emulator, instead of setting in the `config/dev.exs`:
 
-  you also need to provide that option to the producer, so it will be passed to finch, as specified in
-  [the docs](https://hexdocs.pm/broadway_cloud_pub_sub/0.8.0/BroadwayCloudPubSub.Producer.html#module-options)
-
-  ```
-  producer: [
-    module:
-      {BroadwayCloudPubSub.Producer,
-       subscription: "projects/<your-project-id>/subscriptions/<your-subscription-id>",
-       base_url: System.get_env("PUBSUB_EMULATOR_HOST")}
-  ]
-  ```
 
 ## [0.7.1] - 2022-05-09
 
