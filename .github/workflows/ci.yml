@@ -17,10 +17,8 @@ jobs:
       matrix:
         include:
           # Minimum supported versions.
-          # OTP 24.2 is the earliest available on ubuntu-22.04.
-          # Elixir 1.13 is the minimum required by transitive dep :jose.
-          - elixir: "1.13"
-            otp: "24"
+          - elixir: "1.15"
+            otp: "26"
 
           # Latest versions.
           - elixir: "1.19"
