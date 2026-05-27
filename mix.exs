@@ -9,7 +9,7 @@ defmodule BroadwayCloudPubSub.MixProject do
     [
       app: :broadway_cloud_pub_sub,
       version: @version,
-      elixir: "~> 1.11",
+      elixir: "~> 1.13",
       elixirc_paths: elixirc_paths(Mix.env()),
       name: "BroadwayCloudPubSub",
       description: @description,
