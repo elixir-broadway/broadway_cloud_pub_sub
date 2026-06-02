@@ -117,8 +117,61 @@ Broadway.start_link(MyBroadway,
 
 ### Upgrading from 1.x
 
-See the [2.0 upgrade guide](docs/upgrade_to_2.0.md) for the full list of breaking
-changes and step-by-step migration instructions from pull producer to gRPC streaming producer.
+> **2.0 is a major release with breaking changes.** The three-line summary is
+> below; the [full upgrade guide](docs/upgrade_to_2.0.md) has step-by-step
+> instructions, option mapping tables, and rationale for every change.
+
+#### Breaking change 1: [`BroadwayCloudPubSub.Producer` is now the gRPC streaming producer](docs/upgrade_to_2.0.md#1-new-default-producer)
+
+The biggest change: the module name `BroadwayCloudPubSub.Producer` now refers to
+the **new gRPC StreamingPull producer**. The 1.x HTTP pull producer lives on
+under `BroadwayCloudPubSub.Pull.Producer`.
+
+```elixir
+# 1.x — HTTP pull producer
+{BroadwayCloudPubSub.Producer, goth: MyApp.Goth, subscription: "..."}
+
+# 2.0 option A — switch to streaming (recommended, lower latency)
+{BroadwayCloudPubSub.Producer,
+ goth: MyApp.Goth,
+ subscription: "...",
+ max_outstanding_messages: 1000}
+
+# 2.0 option B — keep HTTP pull, one-line change
+{BroadwayCloudPubSub.Pull.Producer, goth: MyApp.Goth, subscription: "..."}
+```
+
+The streaming producer requires `:grpc`, `:protobuf`, and an HTTP/2 adapter
+(`:gun` or `:mint` + `:castore`). If you stay on the pull producer those
+packages are not needed.
+
+#### Breaking change 2: [two modules renamed](docs/upgrade_to_2.0.md#2-broadwaycloudpubsubpullclient-renamed) (only if referenced directly)
+
+| 1.x | 2.0 |
+|---|---|
+| `BroadwayCloudPubSub.PullClient` | `BroadwayCloudPubSub.Pull.FinchClient` |
+| `BroadwayCloudPubSub.Client` (behaviour) | `BroadwayCloudPubSub.Pull.Client` |
+
+These only matter if you passed the module explicitly (e.g. `client:
+BroadwayCloudPubSub.PullClient`) or implemented a custom pull client with
+`@behaviour BroadwayCloudPubSub.Client`.
+
+#### Breaking change 3: [`on_failure` default changed from `:noop` to `{:nack, 0}`](docs/upgrade_to_2.0.md#4-on_failure-default-changed-noop--nack-0)
+
+Failed messages are now immediately made available for redelivery instead of
+waiting for the subscription's `ackDeadlineSeconds` to expire. This matches the
+behaviour of Google's own first-party client libraries.
+
+To keep the 1.x behaviour, set the option explicitly:
+
+```elixir
+{BroadwayCloudPubSub.Pull.Producer,
+ goth: MyApp.Goth,
+ subscription: "...",
+ on_failure: :noop}
+```
+
+See the [full upgrade guide](docs/upgrade_to_2.0.md) for all details.
 
 ## License
 
