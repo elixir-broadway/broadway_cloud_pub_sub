@@ -23,4 +23,3 @@ erl_crash.dump
 broadway_cloud_pub_sub-*.tar
 
 .elixir_ls
-.tool-versions

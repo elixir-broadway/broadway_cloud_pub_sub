@@ -23,6 +23,9 @@ jobs:
           # Latest versions.
           - elixir: "1.19"
             otp: "28"
+
+          - elixir: "1.20"
+            otp: "29"
             lint: lint
     steps:
       - name: Check out this repository
