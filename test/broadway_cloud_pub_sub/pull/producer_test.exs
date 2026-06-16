@@ -148,7 +148,7 @@ defmodule BroadwayCloudPubSub.Pull.ProducerTest do
     test ":subscription should be a string" do
       assert_raise(
         ValidationError,
-        "required option :subscription not found, received options: [:client]",
+        ~r/required :subscription option not found, received options: /,
         fn ->
           prepare_for_start_module_opts([])
         end
@@ -266,7 +266,7 @@ defmodule BroadwayCloudPubSub.Pull.ProducerTest do
 
       assert_raise(
         ValidationError,
-        ~r/expected :max_number_of_messages to be a positive integer, got: 0/,
+        ~r/invalid value for :max_number_of_messages option: expected positive integer, got: 0/,
         fn ->
           prepare_for_start_module_opts(
             goth: FakeAuth,
@@ -278,7 +278,7 @@ defmodule BroadwayCloudPubSub.Pull.ProducerTest do
 
       assert_raise(
         ValidationError,
-        ~r/expected :max_number_of_messages to be a positive integer, got: -1/,
+        ~r/invalid value for :max_number_of_messages option: expected positive integer, got: -1/,
         fn ->
           prepare_for_start_module_opts(
             goth: FakeAuth,
@@ -326,7 +326,7 @@ defmodule BroadwayCloudPubSub.Pull.ProducerTest do
       assert producer_opts[:token_generator] == token_generator
 
       assert_raise ValidationError,
-                   ~r/expected :token_generator to be a tuple {Mod, Fun, Args}, got: {1, 1, 1}/,
+                   ~r/invalid value for :token_generator option: expected tuple {mod, fun, args}, got: {1, 1, 1}/,
                    fn ->
                      prepare_for_start_module_opts(
                        subscription: "projects/foo/subscriptions/bar",
@@ -335,7 +335,7 @@ defmodule BroadwayCloudPubSub.Pull.ProducerTest do
                    end
 
       assert_raise ValidationError,
-                   ~r/expected :token_generator to be a tuple {Mod, Fun, Args}, got: SomeModule/,
+                   ~r/invalid value for :token_generator option: expected tuple {mod, fun, args}, got: SomeModule/,
                    fn ->
                      prepare_for_start_module_opts(
                        subscription: "projects/foo/subscriptions/bar",
