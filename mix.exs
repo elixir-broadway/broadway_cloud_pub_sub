@@ -35,11 +35,10 @@ defmodule BroadwayCloudPubSub.MixProject do
       {:broadway, "~> 1.0"},
       {:finch, "~> 0.9"},
       {:jason, "~> 1.0"},
-      {:nimble_options, "~> 0.3.7 or ~> 0.4 or ~> 1.0"},
+      {:nimble_options, "~> 0.4 or ~> 1.0"},
       {:telemetry, "~> 0.4.3 or ~> 1.0"},
       {:goth, "~> 1.3", optional: true},
-      # TODO: Replace with Hex versions when grpc 1.0 is released
-      {:grpc, "~> 1.0.0-rc.1", optional: true},
+      {:grpc, "~> 1.0", optional: true},
       {:protobuf, "~> 0.12 or ~> 0.13 or ~> 0.14 or ~> 0.15 or ~> 0.16", optional: true},
       {:ex_doc, "~> 0.23", only: :docs},
       {:bypass, "~> 2.1", only: :test}
