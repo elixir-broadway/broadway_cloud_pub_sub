@@ -74,6 +74,16 @@ defmodule BroadwayCloudPubSub.Options do
       """,
       default: :ack
     ],
+    on_draining: [
+      type:
+        {:custom, __MODULE__, :type_atom_action_or_nack_with_bounded_integer,
+         [[{:name, :on_success}, {:min, 0}, {:max, 600}]]},
+      doc: """
+      Configures the acking behaviour for the non consumed messages when draining.
+      See the "Acknowledgements" section below for all the possible values.
+      """,
+      default: {:nack, 0}
+    ],
     receive_interval: [
       type: :integer,
       default: @default_receive_interval,
