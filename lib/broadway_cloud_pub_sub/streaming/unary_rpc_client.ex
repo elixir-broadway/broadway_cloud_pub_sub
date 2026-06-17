@@ -205,18 +205,35 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   end
 
   # The Mint/Gun ConnectionProcess is linked to this GenServer (trap_exit in init/1).
-  # :normal = clean disconnect; nil out channel so ensure_channel/1 reopens it.
+  # :normal = clean disconnect; tear down the channel so ensure_channel/1 reopens it.
   # other   = unexpected crash; schedule a reconnect.
-  def handle_info({:EXIT, _pid, :normal}, state) do
-    {:noreply, %{state | channel: nil}}
+  def handle_info({:EXIT, pid, :normal}, state) do
+    if channel_conn_pid(state) == pid do
+      {:noreply, disconnect_channel(state)}
+    else
+      {:noreply, state}
+    end
   end
 
-  def handle_info({:EXIT, _pid, _reason}, state) do
-    state = schedule_reconnect(%{state | channel: nil})
-    {:noreply, state}
+  def handle_info({:EXIT, pid, _reason}, state) do
+    if channel_conn_pid(state) == pid do
+      state = state |> disconnect_channel() |> schedule_reconnect()
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # Resolves the held channel's owning pid via the configured grpc_client.
+  # Returns nil if no channel is held (so an EXIT signal can never match) or
+  # the client reports no pid for this channel.
+  defp channel_conn_pid(%{channel: nil}), do: nil
+
+  defp channel_conn_pid(%{channel: channel, grpc_client: grpc_client}) do
+    grpc_client.connection_pid(channel)
+  end
 
   @impl GenServer
   def terminate(_reason, %{channel: channel} = state) when not is_nil(channel) do

@@ -62,6 +62,17 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   end
 
   @impl BroadwayCloudPubSub.Streaming.Client
+  # Both the Mint and Gun adapters in the `grpc` library expose the connection-
+  # owning process under `channel.adapter_payload.conn_pid`. Returns nil for any
+  # other shape (e.g. a closed channel whose adapter_payload has been cleared)
+  # so callers can safely pattern-match without raising.
+  def connection_pid(%GRPC.Channel{adapter_payload: %{conn_pid: pid}}) when is_pid(pid) do
+    pid
+  end
+
+  def connection_pid(_channel), do: nil
+
+  @impl BroadwayCloudPubSub.Streaming.Client
   def streaming_pull(channel, _config) do
     Stub.streaming_pull(channel, [])
   end

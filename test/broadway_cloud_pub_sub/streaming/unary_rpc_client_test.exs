@@ -403,4 +403,142 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
       end
     end
   end
+
+  # ============================================================
+  # handle_info({:EXIT, ...}) — channel lifecycle
+  #
+  # Regression coverage for the Mint-adapter leak: a stray EXIT from a
+  # spawn-helper (e.g. Mint's `StreamResponseProcess`, which links to the
+  # caller and exits :normal once the response is consumed) must NOT be
+  # treated as a channel teardown. Only an EXIT whose pid matches the held
+  # ConnectionProcess pid (`adapter_payload.conn_pid`) may tear down the
+  # channel. See UPSTREAM_BUG_REPORT.md.
+  # ============================================================
+
+  defmodule FakeGrpcClient do
+    @moduledoc false
+    @behaviour BroadwayCloudPubSub.Streaming.Client
+
+    # Each connect/1 spawns a new long-lived linked pid to play the role of
+    # the Mint/Gun ConnectionProcess. The pid is exposed via the channel's
+    # adapter_payload, mirroring the real adapters.
+    @impl true
+    def init(opts), do: {:ok, %{test_pid: Keyword.fetch!(opts, :test_pid)}}
+
+    @impl true
+    def connect(%{test_pid: test_pid}) do
+      conn_pid = spawn_link(fn -> Process.sleep(:infinity) end)
+      send(test_pid, {:fake_grpc, :connect, conn_pid})
+      channel = %{adapter_payload: %{conn_pid: conn_pid}}
+      {:ok, channel}
+    end
+
+    @impl true
+    def disconnect(%{adapter_payload: %{conn_pid: conn_pid}}, %{test_pid: test_pid}) do
+      send(test_pid, {:fake_grpc, :disconnect, conn_pid})
+      if is_pid(conn_pid) and Process.alive?(conn_pid), do: Process.exit(conn_pid, :kill)
+      :ok
+    end
+
+    @impl true
+    def connection_pid(%{adapter_payload: %{conn_pid: pid}}) when is_pid(pid), do: pid
+    def connection_pid(_), do: nil
+
+    # Unused by the EXIT-handler regression tests but required by the behaviour.
+    @impl true
+    def streaming_pull(_channel, _config), do: {:error, :not_implemented}
+    @impl true
+    def send_request(_stream, _request, _config), do: {:ok, _stream = nil}
+    @impl true
+    def recv(_stream, _config), do: {:error, :not_implemented}
+    @impl true
+    def cancel(_stream, _config), do: :ok
+    @impl true
+    def acknowledge(_channel, _request, _config), do: {:ok, %{}}
+    @impl true
+    def modify_ack_deadline(_channel, _request, _config), do: {:ok, %{}}
+  end
+
+  defp start_client_with_fake_grpc do
+    opts = [
+      broadway_name: __MODULE__,
+      subscription: "projects/test/subscriptions/test-sub",
+      grpc_client: FakeGrpcClient,
+      grpc_client_config: %{test_pid: self()},
+      backoff_type: :exp,
+      backoff_min: 50,
+      backoff_max: 1_000
+    ]
+
+    {:ok, pid} = UnaryRpcClient.start_link(opts)
+    pid
+  end
+
+  describe "handle_info({:EXIT, ...}) — channel pid matching" do
+    test "spurious EXIT :normal from a non-channel pid does NOT tear down the channel" do
+      pid = start_client_with_fake_grpc()
+
+      assert_receive {:fake_grpc, :connect, conn_pid}
+      state = :sys.get_state(pid)
+      assert state.channel.adapter_payload.conn_pid == conn_pid
+
+      # Simulate Mint's per-RPC StreamResponseProcess: a foreign pid exiting :normal.
+      stray = spawn(fn -> :ok end)
+      send(pid, {:EXIT, stray, :normal})
+      _ = :sys.get_state(pid)
+
+      # Channel must be unchanged, and no extra connect/disconnect must have happened.
+      state_after = :sys.get_state(pid)
+      assert state_after.channel.adapter_payload.conn_pid == conn_pid
+      refute_received {:fake_grpc, :connect, _}
+      refute_received {:fake_grpc, :disconnect, _}
+      assert Process.alive?(conn_pid)
+    end
+
+    test "spurious EXIT :crash from a non-channel pid does NOT tear down the channel" do
+      pid = start_client_with_fake_grpc()
+
+      assert_receive {:fake_grpc, :connect, conn_pid}
+
+      stray = spawn(fn -> :ok end)
+      send(pid, {:EXIT, stray, :some_crash})
+      _ = :sys.get_state(pid)
+
+      state_after = :sys.get_state(pid)
+      assert state_after.channel.adapter_payload.conn_pid == conn_pid
+      assert state_after.reconnect_pending == false
+      refute_received {:fake_grpc, :disconnect, _}
+      refute_received :reconnect
+    end
+
+    test "EXIT :normal from the held ConnectionProcess pid tears down the channel via disconnect_channel/1" do
+      pid = start_client_with_fake_grpc()
+
+      assert_receive {:fake_grpc, :connect, conn_pid}
+
+      send(pid, {:EXIT, conn_pid, :normal})
+      _ = :sys.get_state(pid)
+
+      assert_received {:fake_grpc, :disconnect, ^conn_pid}
+      state_after = :sys.get_state(pid)
+      assert state_after.channel == nil
+    end
+
+    test "EXIT :crash from the held ConnectionProcess pid disconnects AND schedules a reconnect" do
+      pid = start_client_with_fake_grpc()
+
+      assert_receive {:fake_grpc, :connect, conn_pid}
+
+      send(pid, {:EXIT, conn_pid, :boom})
+      _ = :sys.get_state(pid)
+
+      assert_received {:fake_grpc, :disconnect, ^conn_pid}
+      # disconnect_channel sets channel: nil, after which schedule_reconnect/1
+      # short-circuits (channel-nil clause) — the next ack will lazily reopen
+      # via ensure_channel/1. State must remain consistent and alive.
+      state_after = :sys.get_state(pid)
+      assert state_after.channel == nil
+      assert Process.alive?(pid)
+    end
+  end
 end

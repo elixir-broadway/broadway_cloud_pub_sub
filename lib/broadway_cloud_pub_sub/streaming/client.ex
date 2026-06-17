@@ -72,6 +72,16 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   """
   @callback disconnect(channel(), config()) :: :ok
 
+  @doc """
+  Returns the pid that owns the underlying transport connection for `channel`,
+  or `nil` if the channel does not have one (e.g. an already-closed channel,
+  or a custom client whose transport is not pid-backed).
+
+  Implementations should return `nil` rather than raise on unknown channel
+  shapes; callers treat `nil` as “no match possible” and ignore the EXIT.
+  """
+  @callback connection_pid(channel()) :: pid() | nil
+
   # --- Streaming RPCs ---
 
   @doc """
