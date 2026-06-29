@@ -16,7 +16,8 @@ defmodule BroadwayCloudPubSub.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       docs: docs(),
-      package: package()
+      package: package(),
+      preferred_cli_env: [docs: :docs]
     ]
   end
 
