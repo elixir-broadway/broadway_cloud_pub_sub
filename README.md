@@ -40,9 +40,9 @@ def deps do
     {:grpc, "~> 1.0"},
     {:protobuf, "~> 0.12"},
     # Pick one HTTP/2 adapter:
-    {:gun, "~> 2.0"},
+    {:gun, "~> 2.2"},
     # or
-    # {:mint, "~> 1.5"},
+    # {:mint, "~> 1.9"},
     # {:castore, "~> 1.0"}
   ]
 end
@@ -85,9 +85,9 @@ so you select one by adding it to your application's `mix.exs` (see
 [Installation](#installation)).
 
 - `:gun` (default): [Gun](https://github.com/ninenines/gun) HTTP/2 client.
-  Add `{:gun, "~> 2.0"}` to your deps.
+  Add `{:gun, "~> 2.2"}` to your deps.
 - `:mint`: [Mint](https://github.com/elixir-mint/mint) HTTP/2 client.
-  Add `{:mint, "~> 1.5"}` and `{:castore, "~> 1.0"}` to your deps.
+  Add `{:mint, "~> 1.9"}` and `{:castore, "~> 1.0"}` to your deps.
 
 Then select the adapter in your producer config:
 

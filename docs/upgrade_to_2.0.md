@@ -72,9 +72,9 @@ def deps do
     {:grpc, "~> 1.0"},
     {:protobuf, "~> 0.12"},
     # Pick one HTTP/2 adapter:
-    {:gun, "~> 2.0"},
+    {:gun, "~> 2.2"},
     # or
-    # {:mint, "~> 1.5"},
+    # {:mint, "~> 1.9"},
     # {:castore, "~> 1.0"}
   ]
 end

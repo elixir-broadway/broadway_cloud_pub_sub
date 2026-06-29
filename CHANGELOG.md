@@ -362,6 +362,7 @@ This version moves Cloud PubSub from Tesla to Finch, so read the notes below and
 - `BroadwayCloudPubSub.Token` - A generic behaviour to implement token authentication for Pub/Sub clients.
 - `BroadwayCloudPubSub.GothToken` - Default token provider used by `BroadwayCloudPubSub.Producer`.
 
+[2.0.0-rc.0]: https://github.com/dashbitco/broadway_cloud_pub_sub/compare/v1.0.0...v2.0.0-rc.0
 [1.0.0]: https://github.com/dashbitco/broadway_cloud_pub_sub/compare/v0.9.1...v1.0.0
 [0.9.1]: https://github.com/dashbitco/broadway_cloud_pub_sub/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/dashbitco/broadway_cloud_pub_sub/compare/v0.8.0...v0.9.0

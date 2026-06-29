@@ -1,6 +1,8 @@
 defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias BroadwayCloudPubSub.Streaming.UnaryRpcClient
   alias BroadwayCloudPubSub.Test.{GrpcDynamicAdapter, TelemetryHelper}
 
@@ -459,6 +461,50 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
     def modify_ack_deadline(_channel, _request, _config), do: {:ok, %{}}
   end
 
+  # A variant of FakeGrpcClient that returns a configurable error from
+  # acknowledge/3 and modify_ack_deadline/3. The error is read from the
+  # :rpc_error key in the config map.
+  defmodule FailingRpcGrpcClient do
+    @moduledoc false
+    @behaviour BroadwayCloudPubSub.Streaming.Client
+
+    @impl true
+    def init(opts), do: {:ok, Map.new(opts)}
+
+    @impl true
+    def connect(config) do
+      conn_pid = spawn_link(fn -> Process.sleep(:infinity) end)
+      channel = %{adapter_payload: %{conn_pid: conn_pid}}
+      if pid = config[:test_pid], do: send(pid, {:fake_grpc, :connect, conn_pid})
+      {:ok, channel}
+    end
+
+    @impl true
+    def disconnect(%{adapter_payload: %{conn_pid: conn_pid}}, _config) do
+      if is_pid(conn_pid) and Process.alive?(conn_pid), do: Process.exit(conn_pid, :kill)
+      :ok
+    end
+
+    @impl true
+    def connection_pid(%{adapter_payload: %{conn_pid: pid}}) when is_pid(pid), do: pid
+    def connection_pid(_), do: nil
+
+    @impl true
+    def streaming_pull(_channel, _config), do: {:error, :not_implemented}
+    @impl true
+    def send_request(_stream, _request, _config), do: {:ok, nil}
+    @impl true
+    def recv(_stream, _config), do: {:error, :not_implemented}
+    @impl true
+    def cancel(_stream, _config), do: :ok
+
+    @impl true
+    def acknowledge(_channel, _request, config), do: {:error, config.rpc_error}
+
+    @impl true
+    def modify_ack_deadline(_channel, _request, config), do: {:error, config.rpc_error}
+  end
+
   defp start_client_with_fake_grpc do
     opts = [
       broadway_name: __MODULE__,
@@ -539,6 +585,92 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
       state_after = :sys.get_state(pid)
       assert state_after.channel == nil
       assert Process.alive?(pid)
+    end
+  end
+
+  # ============================================================
+  # handle_rpc_error/4 — non-map error tolerance
+  #
+  # Verifies that handle_rpc_error/4 safely handles any error shape
+  # returned by the gRPC adapter without crashing.
+  # ============================================================
+
+  defp start_client_with_failing_rpc(rpc_error) do
+    opts = [
+      broadway_name: __MODULE__,
+      subscription: "projects/test/subscriptions/test-sub",
+      grpc_client: FailingRpcGrpcClient,
+      grpc_client_config: %{test_pid: self(), rpc_error: rpc_error},
+      backoff_type: :exp,
+      backoff_min: 50,
+      backoff_max: 1_000
+    ]
+
+    {:ok, pid} = UnaryRpcClient.start_link(opts)
+    pid
+  end
+
+  describe "handle_rpc_error/4 — non-map error tolerance" do
+    test "atom transport error does not crash" do
+      pid = start_client_with_failing_rpc(:timeout)
+
+      assert_receive {:fake_grpc, :connect, _conn_pid}
+
+      result = UnaryRpcClient.acknowledge(pid, ["ack-1"])
+
+      assert {:ok, ["ack-1"]} = result
+      assert Process.alive?(pid)
+    end
+
+    test "tuple transport error does not crash" do
+      pid = start_client_with_failing_rpc({:error, :closed})
+
+      assert_receive {:fake_grpc, :connect, _conn_pid}
+
+      result = UnaryRpcClient.modify_ack_deadline(pid, ["ack-1", "ack-2"], 60)
+
+      assert {:ok, retained} = result
+      assert Enum.sort(retained) == ["ack-1", "ack-2"]
+      assert Process.alive?(pid)
+    end
+
+    test "GRPC.RPCError with retryable status returns all ack_ids for retry" do
+      error = %GRPC.RPCError{status: 14, message: "unavailable"}
+      pid = start_client_with_failing_rpc(error)
+
+      assert_receive {:fake_grpc, :connect, _conn_pid}
+
+      result = UnaryRpcClient.acknowledge(pid, ["ack-1"])
+
+      assert {:ok, ["ack-1"]} = result
+      assert Process.alive?(pid)
+    end
+
+    @tag capture_log: true
+    test "GRPC.RPCError with terminal status stops the GenServer" do
+      error = %GRPC.RPCError{status: 5, message: "NOT_FOUND"}
+      pid = start_client_with_failing_rpc(error)
+
+      assert_receive {:fake_grpc, :connect, _conn_pid}
+
+      ref = Process.monitor(pid)
+
+      # The GenServer replies {:error, error} then stops with {:terminal_error, error}.
+      # Since start_link links the GenServer to the test process, we must trap exits
+      # to avoid crashing the test itself.
+      Process.flag(:trap_exit, true)
+
+      log =
+        capture_log(fn ->
+          result = UnaryRpcClient.acknowledge(pid, ["ack-1"])
+          assert {:ok, ["ack-1"]} = result
+          assert_receive {:DOWN, ^ref, :process, ^pid, {:terminal_error, ^error}}
+        end)
+
+      assert log =~ "Unable to acknowledge messages"
+      assert log =~ "NOT_FOUND"
+
+      Process.flag(:trap_exit, false)
     end
   end
 end

@@ -299,7 +299,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
         # For exactly-once subscriptions, retryable RPC errors may embed
         # per-ack-ID permanent failures in error details. Permanent ids
         # are dropped; transient ones are returned to AckBatcher for retry.
-        per_ack_errors = AckResult.parse_error_details(Map.get(error, :details))
+        per_ack_errors = AckResult.parse_error_details(error_details(error))
         {transient_ids, permanent_ids} = split_by_ack_result(ack_ids, per_ack_errors)
 
         if permanent_ids != [] do
@@ -357,6 +357,14 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
 
     Telemetry.execute(:unary, event, measurements, metadata, Map.get(config, :telemetry_metadata))
   end
+
+  # Extract per-ack-ID details only when the error is a structured map-like
+  # value (GRPC.RPCError, Google Status, etc.). String/atom/tuple errors from
+  # transport-level failures (e.g. Mint's "the connection is closed") have no
+  # per-ID details to recover; treat them as a single transient failure for
+  # the entire batch.
+  defp error_details(%{details: details}), do: details
+  defp error_details(_), do: nil
 
   # Splits ack_ids into {transient, permanent} based on per-ack-ID error details
   # parsed from the gRPC error. If there are no per-ack-ID details (the common
