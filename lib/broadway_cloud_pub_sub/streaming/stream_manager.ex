@@ -21,7 +21,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     Telemetry
   }
 
-  alias Google.Pubsub.V1.StreamingPullRequest
+  alias BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullRequest
 
   # The server's inactivity timeout is ~60s; pinging at half that prevents closure.
   @default_keepalive_ms 30_000

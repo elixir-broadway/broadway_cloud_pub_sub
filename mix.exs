@@ -56,7 +56,7 @@ defmodule BroadwayCloudPubSub.MixProject do
         BroadwayCloudPubSub,
         BroadwayCloudPubSub.Streaming,
         BroadwayCloudPubSub.Pull,
-        Google.Pubsub.V1
+        BroadwayCloudPubSub.Google.Pubsub.V1
       ],
       source_ref: "v#{@version}",
       source_url: @repo_url,
@@ -77,7 +77,7 @@ defmodule BroadwayCloudPubSub.MixProject do
           BroadwayCloudPubSub.Pull.FinchClient
         ],
         "Protobuf (generated)": [
-          ~r"Google.Pubsub.V1."
+          ~r"BroadwayCloudPubSub.Google.Pubsub.V1."
         ]
       ]
     ]

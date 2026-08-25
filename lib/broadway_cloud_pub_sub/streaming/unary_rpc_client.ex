@@ -33,7 +33,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
 
   alias BroadwayCloudPubSub.Backoff
   alias BroadwayCloudPubSub.Streaming.{AckResult, ErrorClassifier, Options, Telemetry}
-  alias Google.Pubsub.V1.{AcknowledgeRequest, ModifyAckDeadlineRequest}
+  alias BroadwayCloudPubSub.Google.Pubsub.V1.{AcknowledgeRequest, ModifyAckDeadlineRequest}
 
   require Logger
 

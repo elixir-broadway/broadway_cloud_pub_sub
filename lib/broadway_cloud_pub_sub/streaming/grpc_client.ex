@@ -3,7 +3,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   The default gRPC client for `BroadwayCloudPubSub.Producer`.
 
   Implements `BroadwayCloudPubSub.Streaming.Client` using the `grpc` library
-  with the `Google.Pubsub.V1.Subscriber.Stub` generated stub.
+  with the `BroadwayCloudPubSub.Google.Pubsub.V1.Subscriber.Stub` generated stub.
 
   This module handles:
   - Token fetching and channel connection (with TLS and adapter configuration)
@@ -33,8 +33,8 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   @behaviour BroadwayCloudPubSub.Streaming.Client
 
   alias BroadwayCloudPubSub.Streaming.Telemetry
-  alias Google.Pubsub.V1.Subscriber.Stub
-  alias Google.Pubsub.V1.{AcknowledgeRequest, ModifyAckDeadlineRequest}
+  alias BroadwayCloudPubSub.Google.Pubsub.V1.Subscriber.Stub
+  alias BroadwayCloudPubSub.Google.Pubsub.V1.{AcknowledgeRequest, ModifyAckDeadlineRequest}
 
   # Default RPC timeout for unary calls.
   @unary_rpc_timeout_ms 30_000

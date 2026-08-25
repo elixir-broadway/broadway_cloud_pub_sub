@@ -14,6 +14,7 @@ plugins:
       - paths=source_relative
       - include_docs=true
       - plugins=grpc
+      - package_prefix=broadway_cloud_pub_sub
     # To add a new RPC in the future, append its fully-qualified method path
     # here and re-run: buf generate
     types:

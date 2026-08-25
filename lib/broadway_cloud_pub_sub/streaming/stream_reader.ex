@@ -34,7 +34,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamReader do
   # fire-and-forget cast, safe to call from any process concurrently with the
   # reader process enumerating the receive stream.
 
-  alias Google.Pubsub.V1.{StreamingPullRequest, StreamingPullResponse}
+  alias BroadwayCloudPubSub.Google.Pubsub.V1.{StreamingPullRequest, StreamingPullResponse}
 
   @doc """
   Spawns a linked reader process. The reader opens the gRPC stream and sends

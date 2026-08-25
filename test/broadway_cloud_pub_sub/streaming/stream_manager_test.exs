@@ -121,9 +121,9 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
   # Build a minimal ReceivedMessage for sending into {:stream_messages, ...}.
   defp received_message(ack_id, data) do
-    %Google.Pubsub.V1.ReceivedMessage{
+    %BroadwayCloudPubSub.Google.Pubsub.V1.ReceivedMessage{
       ack_id: ack_id,
-      message: %Google.Pubsub.V1.PubsubMessage{
+      message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
         message_id: "msg-#{ack_id}",
         data: data,
         attributes: %{},
@@ -1018,7 +1018,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     test "updates ordering_enabled to true on {:subscription_properties, ...}" do
       pid = start_manager()
 
-      props = %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+      props = %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
         message_ordering_enabled: true,
         exactly_once_delivery_enabled: false
       }
@@ -1037,7 +1037,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: true,
            exactly_once_delivery_enabled: false
          }}
@@ -1050,7 +1050,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: false
          }}
@@ -1087,7 +1087,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     test "updates exactly_once_enabled to true when server reports true" do
       pid = start_manager()
 
-      props = %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+      props = %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
         message_ordering_enabled: false,
         exactly_once_delivery_enabled: true
       }
@@ -1104,7 +1104,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: true
          }}
@@ -1116,7 +1116,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: false
          }}
@@ -1132,7 +1132,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: true,
            exactly_once_delivery_enabled: true
          }}
@@ -1155,11 +1155,11 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     # Then we control exactly_once_enabled via {:subscription_properties, ...}.
 
     defp push_one_message(ctrl, ack_id, data) do
-      response = %Google.Pubsub.V1.StreamingPullResponse{
+      response = %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse{
         received_messages: [
-          %Google.Pubsub.V1.ReceivedMessage{
+          %BroadwayCloudPubSub.Google.Pubsub.V1.ReceivedMessage{
             ack_id: ack_id,
-            message: %Google.Pubsub.V1.PubsubMessage{
+            message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
               message_id: "msg-#{ack_id}",
               data: data,
               attributes: %{},
@@ -1185,7 +1185,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
         send(
           pid,
           {:subscription_properties,
-           %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+           %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
              message_ordering_enabled: false,
              exactly_once_delivery_enabled: false
            }}
@@ -1214,7 +1214,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
         send(
           pid,
           {:subscription_properties,
-           %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+           %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
              message_ordering_enabled: false,
              exactly_once_delivery_enabled: true
            }}
@@ -1247,7 +1247,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
         send(
           pid,
           {:subscription_properties,
-           %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+           %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
              message_ordering_enabled: false,
              exactly_once_delivery_enabled: false
            }}
@@ -1306,11 +1306,11 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       StreamManager.notify_demand(pid, 10)
 
-      response = %Google.Pubsub.V1.StreamingPullResponse{
+      response = %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse{
         received_messages: [
-          %Google.Pubsub.V1.ReceivedMessage{
+          %BroadwayCloudPubSub.Google.Pubsub.V1.ReceivedMessage{
             ack_id: "dyn-ack-1",
-            message: %Google.Pubsub.V1.PubsubMessage{
+            message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
               message_id: "dyn-msg-1",
               data: "hello-dynamic",
               attributes: %{},
@@ -1442,7 +1442,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     send(
       pid,
       {:subscription_properties,
-       %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+       %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
          message_ordering_enabled: false,
          exactly_once_delivery_enabled: true
        }}
@@ -1667,7 +1667,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: true
          }}
@@ -1730,7 +1730,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: false
          }}
@@ -1787,7 +1787,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       send(
         pid,
         {:subscription_properties,
-         %Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
+         %BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties{
            message_ordering_enabled: false,
            exactly_once_delivery_enabled: false
          }}

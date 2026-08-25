@@ -231,7 +231,7 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
     test "constructs correct Broadway.Message with acknowledger tuple" do
       received_msg = %{
         ack_id: "test-ack-id",
-        message: %Google.Pubsub.V1.PubsubMessage{
+        message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
           message_id: "msg-123",
           data: "hello",
           attributes: %{"key" => "value"},
@@ -260,7 +260,7 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
     test "handles nil publish_time" do
       received_msg = %{
         ack_id: "ack-1",
-        message: %Google.Pubsub.V1.PubsubMessage{
+        message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
           message_id: "msg-1",
           data: "test",
           attributes: %{},
@@ -278,7 +278,7 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
     test "maps empty attributes correctly" do
       received_msg = %{
         ack_id: "ack-1",
-        message: %Google.Pubsub.V1.PubsubMessage{
+        message: %BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage{
           message_id: "msg-1",
           data: "test",
           attributes: [],

@@ -1,4 +1,4 @@
-defmodule Google.Pubsub.V1.PubsubMessage.AttributesEntry do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage.AttributesEntry do
   use Protobuf,
     full_name: "google.pubsub.v1.PubsubMessage.AttributesEntry",
     map: true,
@@ -9,7 +9,7 @@ defmodule Google.Pubsub.V1.PubsubMessage.AttributesEntry do
   field(:value, 2, type: :string)
 end
 
-defmodule Google.Pubsub.V1.PubsubMessage do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage do
   @moduledoc """
   A message that is published by publishers and consumed by subscribers. The
   message must contain either a non-empty data field or at least one attribute.
@@ -30,7 +30,7 @@ defmodule Google.Pubsub.V1.PubsubMessage do
 
   field(:attributes, 2,
     repeated: true,
-    type: Google.Pubsub.V1.PubsubMessage.AttributesEntry,
+    type: BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage.AttributesEntry,
     map: true,
     deprecated: false
   )
@@ -40,7 +40,7 @@ defmodule Google.Pubsub.V1.PubsubMessage do
   field(:ordering_key, 5, type: :string, json_name: "orderingKey", deprecated: false)
 end
 
-defmodule Google.Pubsub.V1.ReceivedMessage do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.ReceivedMessage do
   @moduledoc """
   A message and its corresponding acknowledgment ID.
   """
@@ -51,11 +51,11 @@ defmodule Google.Pubsub.V1.ReceivedMessage do
     syntax: :proto3
 
   field(:ack_id, 1, type: :string, json_name: "ackId", deprecated: false)
-  field(:message, 2, type: Google.Pubsub.V1.PubsubMessage, deprecated: false)
+  field(:message, 2, type: BroadwayCloudPubSub.Google.Pubsub.V1.PubsubMessage, deprecated: false)
   field(:delivery_attempt, 3, type: :int32, json_name: "deliveryAttempt", deprecated: false)
 end
 
-defmodule Google.Pubsub.V1.ModifyAckDeadlineRequest do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.ModifyAckDeadlineRequest do
   @moduledoc """
   Request for the ModifyAckDeadline method.
   """
@@ -75,7 +75,7 @@ defmodule Google.Pubsub.V1.ModifyAckDeadlineRequest do
   )
 end
 
-defmodule Google.Pubsub.V1.AcknowledgeRequest do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.AcknowledgeRequest do
   @moduledoc """
   Request for the Acknowledge method.
   """
@@ -89,7 +89,7 @@ defmodule Google.Pubsub.V1.AcknowledgeRequest do
   field(:ack_ids, 2, repeated: true, type: :string, json_name: "ackIds", deprecated: false)
 end
 
-defmodule Google.Pubsub.V1.StreamingPullRequest do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullRequest do
   @moduledoc """
   Request for the `StreamingPull` streaming RPC method. This request is used to
   establish the initial stream as well as to stream acknowledgments and ack
@@ -141,7 +141,7 @@ defmodule Google.Pubsub.V1.StreamingPullRequest do
   field(:protocol_version, 10, type: :int64, json_name: "protocolVersion", deprecated: false)
 end
 
-defmodule Google.Pubsub.V1.StreamingPullResponse.AcknowledgeConfirmation do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.AcknowledgeConfirmation do
   @moduledoc """
   Acknowledgment IDs sent in one or more previous requests to acknowledge a
   previously received message.
@@ -176,7 +176,7 @@ defmodule Google.Pubsub.V1.StreamingPullResponse.AcknowledgeConfirmation do
   )
 end
 
-defmodule Google.Pubsub.V1.StreamingPullResponse.ModifyAckDeadlineConfirmation do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.ModifyAckDeadlineConfirmation do
   @moduledoc """
   Acknowledgment IDs sent in one or more previous requests to modify the
   deadline for a specific message.
@@ -204,7 +204,7 @@ defmodule Google.Pubsub.V1.StreamingPullResponse.ModifyAckDeadlineConfirmation d
   )
 end
 
-defmodule Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties do
   @moduledoc """
   Subscription properties sent as part of the response.
   """
@@ -227,7 +227,7 @@ defmodule Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties do
   )
 end
 
-defmodule Google.Pubsub.V1.StreamingPullResponse do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse do
   @moduledoc """
   Response for the `StreamingPull` method. This response is used to stream
   messages from the server to the client.
@@ -240,31 +240,32 @@ defmodule Google.Pubsub.V1.StreamingPullResponse do
 
   field(:received_messages, 1,
     repeated: true,
-    type: Google.Pubsub.V1.ReceivedMessage,
+    type: BroadwayCloudPubSub.Google.Pubsub.V1.ReceivedMessage,
     json_name: "receivedMessages",
     deprecated: false
   )
 
   field(:acknowledge_confirmation, 5,
-    type: Google.Pubsub.V1.StreamingPullResponse.AcknowledgeConfirmation,
+    type: BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.AcknowledgeConfirmation,
     json_name: "acknowledgeConfirmation",
     deprecated: false
   )
 
   field(:modify_ack_deadline_confirmation, 3,
-    type: Google.Pubsub.V1.StreamingPullResponse.ModifyAckDeadlineConfirmation,
+    type:
+      BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.ModifyAckDeadlineConfirmation,
     json_name: "modifyAckDeadlineConfirmation",
     deprecated: false
   )
 
   field(:subscription_properties, 4,
-    type: Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties,
+    type: BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse.SubscriptionProperties,
     json_name: "subscriptionProperties",
     deprecated: false
   )
 end
 
-defmodule Google.Pubsub.V1.Subscriber.Service do
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.Subscriber.Service do
   @moduledoc """
   The service that an application uses to manipulate subscriptions and to
   consume messages from a subscription via the `Pull` method or by
@@ -273,17 +274,25 @@ defmodule Google.Pubsub.V1.Subscriber.Service do
 
   use GRPC.Service, name: "google.pubsub.v1.Subscriber", protoc_gen_elixir_version: "0.16.0"
 
-  rpc(:ModifyAckDeadline, Google.Pubsub.V1.ModifyAckDeadlineRequest, Google.Protobuf.Empty)
+  rpc(
+    :ModifyAckDeadline,
+    BroadwayCloudPubSub.Google.Pubsub.V1.ModifyAckDeadlineRequest,
+    Google.Protobuf.Empty
+  )
 
-  rpc(:Acknowledge, Google.Pubsub.V1.AcknowledgeRequest, Google.Protobuf.Empty)
+  rpc(
+    :Acknowledge,
+    BroadwayCloudPubSub.Google.Pubsub.V1.AcknowledgeRequest,
+    Google.Protobuf.Empty
+  )
 
   rpc(
     :StreamingPull,
-    stream(Google.Pubsub.V1.StreamingPullRequest),
-    stream(Google.Pubsub.V1.StreamingPullResponse)
+    stream(BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullRequest),
+    stream(BroadwayCloudPubSub.Google.Pubsub.V1.StreamingPullResponse)
   )
 end
 
-defmodule Google.Pubsub.V1.Subscriber.Stub do
-  use GRPC.Stub, service: Google.Pubsub.V1.Subscriber.Service
+defmodule BroadwayCloudPubSub.Google.Pubsub.V1.Subscriber.Stub do
+  use GRPC.Stub, service: BroadwayCloudPubSub.Google.Pubsub.V1.Subscriber.Service
 end

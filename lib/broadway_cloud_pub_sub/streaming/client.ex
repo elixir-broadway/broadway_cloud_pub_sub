@@ -124,7 +124,7 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   @doc """
   Sends an `Acknowledge` unary RPC to the Pub/Sub service.
 
-  `request` is a `Google.Pubsub.V1.AcknowledgeRequest` struct. Returns `{:ok, response}`
+  `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.AcknowledgeRequest` struct. Returns `{:ok, response}`
   on success or `{:error, reason}` on failure. Implementations may emit telemetry spans.
   """
   @callback acknowledge(channel(), request :: term(), config()) ::
@@ -133,7 +133,7 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   @doc """
   Sends a `ModifyAckDeadline` unary RPC to the Pub/Sub service.
 
-  `request` is a `Google.Pubsub.V1.ModifyAckDeadlineRequest` struct. Returns
+  `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.ModifyAckDeadlineRequest` struct. Returns
   `{:ok, response}` on success or `{:error, reason}` on failure. Implementations
   may emit telemetry spans.
   """
