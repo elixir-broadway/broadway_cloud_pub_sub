@@ -1,4 +1,4 @@
-defmodule BroadwayCloudPubSub.ProducerTest do
+defmodule BroadwayCloudPubSub.Pull.ProducerTest do
   use ExUnit.Case
 
   alias Broadway.Message
@@ -49,7 +49,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
   end
 
   defmodule FakeClient do
-    alias BroadwayCloudPubSub.Client
+    alias BroadwayCloudPubSub.Pull.Client
     alias Broadway.Acknowledger
 
     @behaviour Client
@@ -81,7 +81,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
   end
 
   defmodule FakePrepareToConnectClient do
-    alias BroadwayCloudPubSub.Client
+    alias BroadwayCloudPubSub.Pull.Client
 
     @behaviour Client
 
@@ -132,9 +132,9 @@ defmodule BroadwayCloudPubSub.ProducerTest do
     {:ok, pid} = start_broadway(message_server)
 
     try do
-      BroadwayCloudPubSub.Producer.prepare_for_start(Forwarder,
+      BroadwayCloudPubSub.Pull.Producer.prepare_for_start(Forwarder,
         producer: [
-          module: {BroadwayCloudPubSub.Producer, module_opts},
+          module: {BroadwayCloudPubSub.Pull.Producer, module_opts},
           concurrency: 1
         ],
         name: __MODULE__
@@ -148,7 +148,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
     test ":subscription should be a string" do
       assert_raise(
         ValidationError,
-        "required option :subscription not found, received options: [:client]",
+        ~r/required :subscription option not found, received options: /,
         fn ->
           prepare_for_start_module_opts([])
         end
@@ -182,7 +182,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                _,
                [
                  producer: [
-                   module: {BroadwayCloudPubSub.Producer, producer_opts},
+                   module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                    concurrency: 1
                  ],
                  name: __MODULE__
@@ -201,7 +201,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                assert {_,
                        [
                          producer: [
-                           module: {BroadwayCloudPubSub.Producer, producer_opts},
+                           module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                            concurrency: 1
                          ],
                          name: __MODULE__
@@ -218,7 +218,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -235,7 +235,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, result_module_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, result_module_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -251,7 +251,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, result_module_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, result_module_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -266,7 +266,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
 
       assert_raise(
         ValidationError,
-        ~r/expected :max_number_of_messages to be a positive integer, got: 0/,
+        ~r/invalid value for :max_number_of_messages option: expected positive integer, got: 0/,
         fn ->
           prepare_for_start_module_opts(
             goth: FakeAuth,
@@ -278,7 +278,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
 
       assert_raise(
         ValidationError,
-        ~r/expected :max_number_of_messages to be a positive integer, got: -1/,
+        ~r/invalid value for :max_number_of_messages option: expected positive integer, got: -1/,
         fn ->
           prepare_for_start_module_opts(
             goth: FakeAuth,
@@ -293,7 +293,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -304,7 +304,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                )
 
       assert producer_opts[:token_generator] ==
-               {BroadwayCloudPubSub.Options, :generate_goth_token, [FakeAuth]}
+               {BroadwayCloudPubSub.Pull.Options, :generate_goth_token, [FakeAuth]}
     end
 
     test ":token_generator should be a tuple {Mod, Fun, Args}" do
@@ -313,7 +313,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -326,7 +326,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert producer_opts[:token_generator] == token_generator
 
       assert_raise ValidationError,
-                   ~r/expected :token_generator to be a tuple {Mod, Fun, Args}, got: {1, 1, 1}/,
+                   ~r/invalid value for :token_generator option: expected tuple {mod, fun, args}, got: {1, 1, 1}/,
                    fn ->
                      prepare_for_start_module_opts(
                        subscription: "projects/foo/subscriptions/bar",
@@ -335,7 +335,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                    end
 
       assert_raise ValidationError,
-                   ~r/expected :token_generator to be a tuple {Mod, Fun, Args}, got: SomeModule/,
+                   ~r/invalid value for :token_generator option: expected tuple {mod, fun, args}, got: SomeModule/,
                    fn ->
                      prepare_for_start_module_opts(
                        subscription: "projects/foo/subscriptions/bar",
@@ -348,7 +348,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -377,7 +377,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -395,7 +395,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -408,11 +408,11 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert producer_opts[:on_success] == :ack
     end
 
-    test ":on_failure defaults to :noop" do
+    test ":on_failure defaults to {:nack, 0}" do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -422,7 +422,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                  subscription: "projects/foo/subscriptions/bar"
                )
 
-      assert producer_opts[:on_failure] == :noop
+      assert producer_opts[:on_failure] == {:nack, 0}
     end
 
     test ":on_success should be a valid action" do
@@ -430,7 +430,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
         assert {_,
                 [
                   producer: [
-                    module: {BroadwayCloudPubSub.Producer, producer_opts},
+                    module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                     concurrency: 1
                   ],
                   name: __MODULE__
@@ -490,7 +490,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
         assert {_,
                 [
                   producer: [
-                    module: {BroadwayCloudPubSub.Producer, producer_opts},
+                    module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                     concurrency: 1
                   ],
                   name: __MODULE__
@@ -549,7 +549,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       assert {_,
               [
                 producer: [
-                  module: {BroadwayCloudPubSub.Producer, producer_opts},
+                  module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                   concurrency: 1
                 ],
                 name: __MODULE__
@@ -568,11 +568,12 @@ defmodule BroadwayCloudPubSub.ProducerTest do
     test "with :client PullClient returns a child_spec for starting a Finch pool" do
       assert {
                [
-                 {Finch, name: BroadwayCloudPubSub.ProducerTest.BroadwayCloudPubSub.PullClient}
+                 {Finch,
+                  name: BroadwayCloudPubSub.Pull.ProducerTest.BroadwayCloudPubSub.Pull.FinchClient}
                ],
                [
                  producer: [
-                   module: {BroadwayCloudPubSub.Producer, _producer_opts},
+                   module: {BroadwayCloudPubSub.Pull.Producer, _producer_opts},
                    concurrency: 1
                  ],
                  name: __MODULE__
@@ -589,7 +590,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
                [],
                [
                  producer: [
-                   module: {BroadwayCloudPubSub.Producer, producer_opts},
+                   module: {BroadwayCloudPubSub.Pull.Producer, producer_opts},
                    concurrency: 1
                  ],
                  name: __MODULE__
@@ -761,7 +762,7 @@ defmodule BroadwayCloudPubSub.ProducerTest do
       name: broadway_name,
       context: %{test_pid: self()},
       producer: [
-        module: {BroadwayCloudPubSub.Producer, Keyword.merge(producer_opts, opts)},
+        module: {BroadwayCloudPubSub.Pull.Producer, Keyword.merge(producer_opts, opts)},
         concurrency: 1
       ],
       processors: [

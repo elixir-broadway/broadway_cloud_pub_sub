@@ -1,267 +1,621 @@
 defmodule BroadwayCloudPubSub.Producer do
   @moduledoc """
-  A GenStage producer that continuously receives messages from a Google Cloud Pub/Sub
-  topic and acknowledges them after being successfully processed.
+  A Broadway producer that uses the gRPC StreamingPull API to receive
+  messages from a Google Cloud Pub/Sub subscription.
 
-  By default this producer uses `BroadwayCloudPubSub.PullClient` to talk to Cloud
-  Pub/Sub, but you can provide your client by implementing the `BroadwayCloudPubSub.Client`
-  behaviour.
+  ## Overview
 
-  For a quick getting started on using Broadway with Cloud Pub/Sub, please see
-  the [Google Cloud Pub/Sub Guide](https://hexdocs.pm/broadway/google-cloud-pubsub.html).
+  This producer opens a persistent bidirectional gRPC stream to the Pub/Sub
+  service and receives messages as the server pushes them. This is more
+  efficient than the HTTP pull approach (`BroadwayCloudPubSub.Pull.Producer`) for
+  workloads that require low latency or high throughput.
+
+  Each producer process (N = `producer: [concurrency: N]`) starts and links
+  its own **StreamManager** (GenServer), giving N independent gRPC streams
+  sharing a single `clientID`.
+
+  Key components:
+
+    * **StreamManager** - GenServer that owns the gRPC bidirectional stream,
+      manages connection lifecycle (connect/reconnect/backoff), extends message
+      leases, and dispatches messages to the linked Producer when demand is
+      available. Started via `start_link` from `Producer.init/1`.
+
+    * **Producer** - GenStage process that bridges StreamManager to Broadway.
+      Tracks downstream demand and forwards messages to processors.
+
+    * **UnaryAckSupervisor** - shared across all producers. Supervises
+      AckBatcher and UnaryRpcClient, which batch and send ack/nack/modifyAckDeadline
+      requests via separate unary RPCs (not on the streaming connection).
+
+  ## Usage
+
+      Broadway.start_link(MyPipeline,
+        name: MyPipeline,
+        producer: [
+          module:
+            {BroadwayCloudPubSub.Producer,
+             goth: MyApp.Goth,
+             subscription: "projects/my-project/subscriptions/my-subscription",
+             max_outstanding_messages: 1000}
+        ],
+        processors: [default: [concurrency: 10]]
+      )
 
   ## Options
 
-  Aside from `:receive_interval` and `:client` which are generic and apply to all
-  producers (regardless of the client implementation), all other options are specific to
-  `BroadwayCloudPubSub.PullClient`, which is the default client.
-
-  #{NimbleOptions.docs(BroadwayCloudPubSub.Options.definition())}
-
-  ### Custom token generator
-
-  A custom token generator can be given as a MFArgs tuple.
-
-  For example, define a `MyApp.fetch_token/0` function:
-
-      defmodule MyApp do
-
-        @doc "Fetches a Google auth token"
-        def fetch_token do
-          with {:ok, token} <- Goth.fetch(MyApp.Goth)
-            {:ok, token.token}
-          end
-        end
-      end
-
-  and configure the producer to use it:
-
-      token_generator: {MyApp, :fetch_token, []}
+  #{NimbleOptions.docs(BroadwayCloudPubSub.Streaming.Options.definition())}
 
   ## Acknowledgements
 
-  You can use the `:on_success` and `:on_failure` options to control how
-  messages are acknowledged with the Pub/Sub system.
+  Use `:on_success` and `:on_failure` to control how messages are acknowledged
+  with Pub/Sub. Both can also be changed per-message via
+  `Broadway.Message.configure_ack/2`.
 
-  By default successful messages are acknowledged and failed messages are ignored.
-  You can set `:on_success` and `:on_failure` when starting this producer,
-  or change them for each message through `Broadway.Message.configure_ack/2`.
+  Supported values:
 
-  The following values are supported by both `:on_success` and `:on_failure`:
+    * `:ack` - acknowledge the message; Pub/Sub removes it from the subscription.
+    * `:noop` - do nothing; the message is redelivered after the subscription's
+      `ackDeadlineSeconds` expires.
+    * `:nack` - equivalent to `{:nack, 0}`; makes the message immediately
+      available for redelivery.
+    * `{:nack, seconds}` - sets `ackDeadlineSeconds` to `seconds` for the
+      message, controlling when it becomes available for redelivery (0-600).
 
-  * `:ack` - Acknowledge the message. Pub/Sub can remove the message from
-     the subscription.
+  Acks and deadline modifications are batched by **AckBatcher** and flushed to
+  Pub/Sub via unary RPCs at a configurable interval (`:ack_batch_interval_ms`,
+  default 100ms) or when the batch reaches `:ack_batch_max_size` (default 2500).
+  Batching is done on a separate unary connection, independently of the
+  streaming connection. See [Telemetry](#module-telemetry) for ack-related events.
 
-  * `:noop` - Do nothing. No requests will be made to Pub/Sub, and the
-     message will be rescheduled according to the subscription-level
-     `ackDeadlineSeconds`.
+  ## Flow control
 
-  * `:nack` - Make a request to Pub/Sub to set `ackDeadlineSeconds` to `0`,
-     which may cause the message to be immediately redelivered to another
-     connected consumer. Note that this does not modify the subscription-level
-     `ackDeadlineSeconds` used for subsequent messages.
+  Flow control is managed at the gRPC stream level via `:max_outstanding_messages`
+  and `:max_outstanding_bytes`. The Pub/Sub server will not push more messages
+  than these limits allow. This is the primary backpressure mechanism.
 
-  * `{:nack, integer}` - Modifies the `ackDeadlineSeconds` for a particular
-     message. Note that this does not modify the subscription-level
-     `ackDeadlineSeconds` used for subsequent messages.
+  StreamManager also tracks GenStage demand from the Producer and buffers
+  messages internally when demand is zero, preventing unbounded mailbox growth.
 
-  ### Batching
+  See also [Lease management](#module-lease-management) for how message deadlines
+  are extended while flow control holds messages in the buffer.
 
-  Even if you are not interested in working with Broadway batches via the
-  `handle_batch/3` callback, we recommend all Broadway pipelines with Pub/Sub
-  producers to define a default batcher with `batch_size` set to 10, so
-  messages can be acknowledged in batches, which improves the performance
-  and reduces the cost of integrating with Google Cloud Pub/Sub. In addition,
-  you should ensure that `batch_timeout` is set to a value less than
-  the acknowledgement deadline on the subscription. Otherwise you could
-  potentially have messages that remain in the subscription and are never
-  acknowledged successfully.
+  ## Lease management
 
-  ### Example
+  The producer automatically extends message acknowledgement deadlines before
+  they expire. Leases are extended by sending `modifyAckDeadline` requests via
+  the AckBatcher. The extension interval is derived from the effective ack
+  deadline with randomized jitter to spread out RPC calls.
 
-      Broadway.start_link(MyBroadway,
-        name: MyBroadway,
-        producer: [
-          module: {BroadwayCloudPubSub.Producer,
-            goth: MyApp.Goth,
-            subscription: "projects/my-project/subscriptions/my_subscription"
-          }
-        ],
-        processors: [
-          default: []
-        ],
-        batchers: [
-          default: [
-            batch_size: 10,
-            batch_timeout: 2_000
-          ]
-        ]
-      )
+  Messages are tracked until they are acknowledged, nacked, or until
+  `:max_extension_ms` elapses (default 60 minutes), after which the server
+  redelivers them. This prevents a stuck consumer from holding messages
+  indefinitely. The `extend_leases` and `lease_expired` telemetry events
+  (see [Telemetry](#module-telemetry)) provide visibility into lease activity.
 
-  The above configuration will set up a producer that continuously receives
-  messages from `"projects/my-project/subscriptions/my_subscription"` and sends
-  them downstream.
+  ## Exactly-once delivery
+
+  When the subscription has exactly-once delivery enabled, the server signals
+  this via `StreamingPullResponse.subscription_properties`. The producer
+  detects this automatically and enforces a minimum lease extension interval
+  (the server requires at least 60 seconds between extensions for exactly-once
+  subscriptions).
+
+  For exactly-once subscriptions, increase `:retry_deadline_ms` to 600,000ms
+  (10 minutes) to allow the unary RPC client enough time to retry transient
+  ack failures - the server requires successful ack receipt before guaranteeing
+  exactly-once semantics. The library automatically adjusts `:retry_deadline_ms`
+  when the subscription's exactly-once status changes at runtime.
+
+  ## Message ordering
+
+  Set `enable_message_ordering: true` to route messages with the same
+  `ordering_key` to the same Broadway processor, ensuring sequential processing
+  per key. The subscription must also have message ordering enabled in Pub/Sub.
+
+  Ordering is enforced via Broadway's `:partition_by` option, which is
+  automatically injected into all processor groups when this option is set.
+
+  ## Graceful shutdown
+
+  On shutdown, the producer:
+
+    1. Nacks all buffered messages (received but not yet dispatched to
+       processors) per the `:on_shutdown` option (default `{:nack, 5}`).
+    2. Stops the gRPC stream to prevent new messages from arriving.
+    3. Waits up to `:drain_timeout_ms` (default 30s) for in-flight messages
+       (dispatched to processors but not yet acked/nacked) to be processed.
+    4. Force-closes the stream after the drain timeout.
+
+  The drain lifecycle is tracked via the `drain` telemetry span
+  (see [Telemetry](#module-telemetry)).
+
+  ## Error handling
+
+  gRPC stream errors are classified as retryable or terminal:
+
+    * **Retryable** (e.g. `DEADLINE_EXCEEDED`, `UNAVAILABLE`, `UNAUTHENTICATED`) -
+      the stream is closed and reconnected after a backoff delay. A new OAuth2
+      token is fetched on each reconnect.
+    * **Terminal** (e.g. `NOT_FOUND`, `PERMISSION_DENIED`, `INVALID_ARGUMENT`) -
+      the StreamManager stops and Broadway's supervision restarts the pipeline.
+
+  Reconnect backoff is configurable via `:backoff_type`, `:backoff_min`, and
+  `:backoff_max`. The default is randomized exponential (`:rand_exp`) starting
+  at 100ms and capped at 60s.
+
+  ## Pub/Sub Emulator
+
+  To use with the local Pub/Sub emulator:
+
+      {BroadwayCloudPubSub.Producer,
+       subscription: "projects/my-project/subscriptions/my-subscription",
+       grpc_endpoint: "localhost:8085",
+       use_ssl: false,
+       token_generator: {MyApp, :emulator_token, []}}
+
+  ## Differences from `BroadwayCloudPubSub.Pull.Producer`
+
+    * **Push-based**: Messages arrive via a persistent gRPC stream rather than
+      being fetched on demand via HTTP pull requests.
+    * **Flow control**: Controlled at the gRPC stream level via
+      `:max_outstanding_messages` and `:max_outstanding_bytes` rather than
+      per-request polling. See [Flow control](#module-flow-control).
+    * **Graceful shutdown**: The stream is closed immediately on shutdown to
+      stop new messages arriving; the unary channel stays up so in-flight
+      messages can still be acked or nacked during the drain window. The pull
+      producer has no drain phase. See [Graceful shutdown](#module-graceful-shutdown).
+    * **Lease extension**: Message deadlines are extended automatically to
+      prevent redelivery while processing. The pull producer relies on the
+      subscription-level ack deadline only. See
+      [Lease management](#module-lease-management).
+    * **Enhanced telemetry**: Emits a richer set of events covering connection
+      lifecycle, lease activity, ack/modack RPC spans, drain lifecycle, and
+      per-cycle pressure snapshots. See [Telemetry](#module-telemetry).
 
   ## Telemetry
 
-  This producer emits a few [Telemetry](https://github.com/beam-telemetry/telemetry)
-  events which are listed below.
+  This producer emits the following [Telemetry](https://github.com/beam-telemetry/telemetry)
+  events. All events share the top-level prefix `[:broadway_cloud_pub_sub, :streaming]`,
+  followed by a layer sub-prefix.
 
-    * `[:broadway_cloud_pub_sub, :pull_client, :receive_messages, :start | :stop | :exception]` spans -
-      these events are emitted in "span style" when executing pull requests to GCP PubSub.
-      See `:telemetry.span/3`.
+  All event metadata maps include an `:extra` key when the `:telemetry_metadata` option
+  is configured. Its value is the static term provided, or the return value of the MFA
+  called at emission time.
 
-      All these events have the measurements described in `:telemetry.span/3`. The events
-      contain the following metadata:
+  ### Stream events - `[:broadway_cloud_pub_sub, :streaming, :stream, ...]`
 
-      * `:max_messages` - the number of messages requested after applying the `max_messages`
-      config option to the existing demand
-      * `:demand` - the total demand accumulated into the producer
-      * `:name` - the name of the Broadway topology
+  Emitted by `StreamManager`. Metadata: `%{name: broadway_name, subscription: subscription}`
+  (plus `:extra` when `:telemetry_metadata` is set).
 
-    * `[:broadway_cloud_pub_sub, :pull_client, :ack, :start | :stop | :exception]` span - these events
-      are emitted in "span style" when acking messages on GCP PubSub. See `:telemetry.span/3`.
+  #### Backpressure
 
-      All these events have the measurements described in `:telemetry.span/3`. The events
-      contain the following metadata:
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :pressure_snapshot]` -
+      point-in-time snapshot of pipeline backpressure, emitted on every lease
+      extension cycle. Useful for diagnosing throughput bottlenecks without
+      enabling tracing.
 
-      * `:name` - the name of the Broadway topology
+      Measurements: `%{outstanding_count: non_neg_integer(), buffered_count: non_neg_integer(), pending_demand: non_neg_integer()}`
+
+      * `outstanding_count` - messages received but not yet acked or nacked.
+      * `buffered_count` - messages waiting in the internal buffer for producer demand.
+      * `pending_demand` - units of GenStage demand currently unfulfilled.
+
+  #### Connection lifecycle
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :connect]` - gRPC
+      StreamingPull stream successfully established.
+
+      Measurements: `%{}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :disconnect]` - gRPC
+      stream closed or errored.
+
+      Measurements: `%{}`
+
+      Metadata includes: `reason: term()` - the error or close reason
+      (e.g. a `GRPC.RPCError`, `:stream_closed`, `:connection_down`).
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :connection_failure]` -
+      connection attempt failed before the stream was established.
+
+      Measurements: `%{}`
+
+      Metadata includes: `reason: term()` - the connection error.
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :reconnect]` - reconnect
+      scheduled after a disconnect or connection failure. The backoff delay
+      indicates how long the StreamManager will wait before the next connection
+      attempt.
+
+      Measurements: `%{delay: pos_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :terminal_error]` -
+      non-retryable gRPC error received. StreamManager stops after this event.
+
+      Measurements: `%{}`
+
+      Metadata includes: `reason: term()` - the terminal gRPC error.
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :keepalive]` - keep-alive
+      ping sent on the gRPC connection.
+
+      Measurements: `%{deadline: pos_integer()}`
+
+  #### Messages
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :receive_messages]` -
+      messages received from the stream and forwarded to the producer.
+
+      Measurements: `%{count: pos_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :ack]` - acknowledge
+      request dispatched to AckBatcher.
+
+      Measurements: `%{count: pos_integer()}`
+
+  #### Lease management
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :extend_leases]` - lease
+      extension cycle ran; modack requests dispatched for outstanding messages.
+
+      Measurements: `%{count: non_neg_integer(), deadline: pos_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :lease_expired]` -
+      outstanding messages dropped because they exceeded `:max_extension_ms`.
+
+      Measurements: `%{count: pos_integer()}`
+
+  #### Exactly-once delivery
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :receipt_modack_stale]` -
+      pending receipt modack entries that exceeded the 60-second staleness
+      threshold were nacked for fast redelivery. Emitted during the lease
+      extension cycle.
+
+      Measurements: `%{count: pos_integer()}`
+
+  #### Graceful shutdown
+
+    * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :start | :stop | :exception]` -
+      span tracking the full graceful drain lifecycle, from
+      `prepare_for_draining/1` through completion, timeout, or unexpected
+      termination. Uses the same convention as `:telemetry.span/3`.
+
+      * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :start]` - drain
+        initiated. Emitted before the stream is closed or any messages are nacked.
+
+        Measurements: `%{system_time: integer(), monotonic_time: integer(),
+        buffered_count: non_neg_integer(), outstanding_count: non_neg_integer(),
+        pending_receipt_modack_count: non_neg_integer()}`
+
+      * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :stop]` - all
+        in-flight messages were processed and stream closed cleanly.
+
+        Measurements: `%{duration: non_neg_integer(), monotonic_time: integer()}`
+
+      * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :exception]` -
+        drain ended abnormally.
+
+        Measurements: `%{duration: non_neg_integer(), monotonic_time: integer()}`
+        (plus `remaining_count: non_neg_integer()` for `:timeout` and `:terminate` kinds)
+
+        Metadata includes `kind` and `reason` identifying the cause:
+
+        * `kind: :timeout, reason: :drain_timeout` - `drain_timeout_ms` elapsed
+          before all messages were acked. Remaining messages are nacked immediately.
+        * `kind: :terminate, reason: term()` - the GenServer was terminated while
+          a drain was in progress.
+        * `kind: :error, reason: binary()` - an exception was raised inside
+          `prepare_for_draining/1` itself.
+
+  ### AckBatcher events - `[:broadway_cloud_pub_sub, :streaming, :ack_batcher, ...]`
+
+  Emitted by `AckBatcher`. Metadata: `%{name: broadway_name, subscription: subscription}`
+  (plus `:extra` when `:telemetry_metadata` is set).
+
+    * `[:broadway_cloud_pub_sub, :streaming, :ack_batcher, :flush_deferred]` -
+      flush deferred because UnaryRpcClient was not yet available (e.g.
+      restarting after a crash).
+
+      Measurements: `%{ack_count: non_neg_integer(), modack_groups: non_neg_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :ack_batcher, :modack_retry_exhausted]` -
+      modack ack_ids dropped after reaching the maximum retry attempt count.
+
+      Measurements: `%{count: pos_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :ack_batcher, :ack_retry_expired]` -
+      ack ack_ids dropped because they exceeded the exactly-once retry deadline.
+
+      Measurements: `%{count: pos_integer()}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :ack_batcher, :modack_retry_expired]` -
+      modack ack_ids dropped because they exceeded the exactly-once retry deadline.
+
+      Measurements: `%{count: pos_integer()}`
+
+  ### Unary RPC client events - `[:broadway_cloud_pub_sub, :streaming, :unary, ...]`
+
+  Emitted by `UnaryRpcClient`. Metadata: `%{name: broadway_name, subscription: subscription}`
+  (plus `:extra` when `:telemetry_metadata` is set).
+
+    * `[:broadway_cloud_pub_sub, :streaming, :unary, :connect]` - unary RPC
+      channel reconnected after a failure.
+
+      Measurements: `%{}`
+
+    * `[:broadway_cloud_pub_sub, :streaming, :unary, :connection_failure]` -
+      unary RPC channel connect attempt failed.
+
+      Measurements: `%{}`
+
+      Metadata includes: `reason: term()` - the connection error.
+
+    * `[:broadway_cloud_pub_sub, :streaming, :unary, :permanent_failure]` -
+      one or more ack_ids were permanently rejected by the server (e.g. ack_id
+      expired). These are dropped and not retried.
+
+      Measurements: `%{count: pos_integer()}`
+
+  ### gRPC client spans - `[:broadway_cloud_pub_sub, :streaming, :grpc_client, ...]`
+
+  Emitted by `GrpcClient` (the default `BroadwayCloudPubSub.Streaming.Client`
+  implementation) as `:telemetry.span/3` spans.
+  Metadata: `%{name: broadway_name, subscription: subscription, count: ack_count}`
+  (plus `:extra` when `:telemetry_metadata` is set).
+
+    * `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack, :start | :stop | :exception]` -
+      wraps each `Acknowledge` unary RPC call.
+
+    * `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :modack, :start | :stop | :exception]` -
+      wraps each `ModifyAckDeadline` unary RPC call.
+
   """
 
   use GenStage
-  alias Broadway.Producer
-  alias BroadwayCloudPubSub.{Acknowledger, Options}
 
-  @behaviour Producer
+  alias BroadwayCloudPubSub.Streaming.{StreamManager, UnaryAckSupervisor, Options}
+
+  @behaviour Broadway.Producer
+
+  # --- Broadway.Producer callbacks ---
+
+  @impl Broadway.Producer
+  def prepare_for_start(_module, broadway_opts) do
+    {producer_module, opts} = broadway_opts[:producer][:module]
+
+    opts =
+      opts
+      |> Keyword.put(:broadway, broadway_opts)
+      |> Keyword.put(:broadway_name, broadway_opts[:name])
+      |> validate_options!()
+      |> assign_client_id()
+      |> assign_token_generator()
+
+    broadway_name = opts[:broadway_name]
+
+    # Normalise :grpc_client - accept Module or {Module, inner_opts}.
+    # When a tuple is given, merge the inner opts into the producer opts so
+    # that grpc_client.init/1 and all downstream components see them.
+    {grpc_client, opts} =
+      case opts[:grpc_client] do
+        {mod, inner_opts} ->
+          {mod, Keyword.merge(opts, inner_opts) |> Keyword.put(:grpc_client, mod)}
+
+        mod ->
+          {mod, opts}
+      end
+
+    # Add grpc_client_config to be used by stream manager and unary
+    {:ok, client_config} = grpc_client.init(opts)
+
+    opts = Keyword.put(opts, :grpc_client_config, client_config)
+
+    # UnaryAckSupervisor options
+    unary_name = Module.concat(broadway_name, UnaryAckSupervisor)
+    unary_opts = Keyword.put(opts, :name, unary_name)
+
+    unary_sup_spec = %{
+      id: unary_name,
+      start: {UnaryAckSupervisor, :start_link, [unary_opts]},
+      restart: :permanent,
+      type: :supervisor
+    }
+
+    # Broadway options
+    options =
+      broadway_opts
+      |> put_in([:producer, :module], {producer_module, opts})
+      |> maybe_inject_partition_by(opts)
+
+    # Only the UnaryAckSupervisor is a shared child spec. Each producer starts
+    # its own StreamManager directly via start_link in init/1 - the natural
+    # link means crashes propagate without needing a supervisor.
+    {[unary_sup_spec], options}
+  end
 
   @impl GenStage
   def init(opts) do
-    receive_interval = opts[:receive_interval]
-    client = opts[:client]
+    Process.flag(:trap_exit, true)
 
-    {:ok, config} = client.init(opts)
-    ack_ref = opts[:broadway][:name]
+    config = Map.new(opts)
+    broadway_name = config.broadway[:name]
+    index = config.broadway[:index]
+
+    # Each producer gets a unique ack_ref so persistent_term entries don't collide.
+    ack_ref = {broadway_name, index}
+    manager_name = Module.concat(broadway_name, "StreamManager_#{index}")
+
+    # Start our own StreamManager directly. start_link creates a natural
+    # bidirectional link - if the manager crashes (terminal gRPC error), the
+    # producer receives an EXIT signal; if the producer dies, the manager does too.
+    manager_opts =
+      opts
+      |> Keyword.merge(name: manager_name, producer_pid: self(), ack_ref: ack_ref)
+
+    {:ok, manager_pid} = StreamManager.start_link(manager_opts)
+
+    # Store the manager's *registered name* (not its PID) in persistent_term so
+    # the Acknowledger can route acks even after a StreamManager restart. PIDs
+    # become stale on restart; names always resolve to the current process.
+    ack_config = %{on_success: config.on_success, on_failure: config.on_failure}
+    :persistent_term.put(ack_ref, {manager_name, ack_config})
 
     {:producer,
      %{
-       demand: 0,
-       draining: false,
-       receive_timer: nil,
-       receive_interval: receive_interval,
-       client: {client, config},
+       manager_pid: manager_pid,
+       manager_name: manager_name,
        ack_ref: ack_ref,
-       worker_task: nil
+       config: config,
+       draining: false
      }}
   end
 
-  @impl Producer
-  def prepare_for_start(_module, broadway_opts) do
-    {producer_module, client_opts} = broadway_opts[:producer][:module]
-
-    opts = NimbleOptions.validate!(client_opts, Options.definition())
-
-    ack_ref = broadway_opts[:name]
-
-    {client, opts} =
-      case opts[:client] do
-        {client, client_opts} -> {client, Keyword.merge(opts, client_opts)}
-        client -> {client, opts}
-      end
-
-    opts = Keyword.put(opts, :client, client)
-
-    opts =
-      Keyword.put_new_lazy(opts, :token_generator, fn ->
-        Options.make_token_generator(opts)
-      end)
-
-    {specs, opts} = prepare_to_connect(broadway_opts[:name], client, opts)
-
-    ack_opts = Keyword.put(opts, :topology_name, broadway_opts[:name])
-
-    :persistent_term.put(ack_ref, Map.new(ack_opts))
-
-    broadway_opts_with_defaults =
-      put_in(broadway_opts, [:producer, :module], {producer_module, opts})
-
-    {specs, broadway_opts_with_defaults}
-  end
-
-  defp prepare_to_connect(module, client, producer_opts) do
-    if Code.ensure_loaded?(client) and function_exported?(client, :prepare_to_connect, 2) do
-      client.prepare_to_connect(module, producer_opts)
-    else
-      {[], producer_opts}
-    end
-  end
-
-  @impl true
-  def handle_demand(incoming_demand, %{demand: demand} = state) do
-    handle_receive_messages(%{state | demand: demand + incoming_demand})
-  end
-
-  @impl true
-  def handle_info(:receive_messages, state) do
-    handle_receive_messages(%{state | receive_timer: nil})
-  end
-
-  def handle_info({ref, messages}, %{demand: demand, worker_task: %{ref: ref}} = state) do
-    new_demand = demand - length(messages)
-
-    receive_timer =
-      case {messages, new_demand} do
-        {[], _} ->
-          schedule_receive_messages(state.receive_interval)
-
-        {_, 0} ->
-          nil
-
-        _ ->
-          schedule_receive_messages(0)
-      end
-
-    {:noreply, messages,
-     %{state | demand: new_demand, receive_timer: receive_timer, worker_task: nil}}
-  end
-
-  @impl true
-  def handle_info(_, state) do
+  @impl GenStage
+  def handle_demand(_incoming_demand, %{draining: true} = state) do
     {:noreply, [], state}
   end
 
-  @impl Producer
+  def handle_demand(incoming_demand, state) do
+    StreamManager.notify_demand(state.manager_pid, incoming_demand)
+    {:noreply, [], state}
+  end
+
+  @impl GenStage
+  def handle_info({:stream_messages, messages}, state) do
+    {:noreply, messages, state}
+  end
+
+  # StreamManager crashed (terminal gRPC error). Propagate the crash to the
+  # producer so Broadway's supervision restarts the pipeline.
+  def handle_info(
+        {:EXIT, manager_pid, reason},
+        %{manager_pid: manager_pid} = state
+      ) do
+    {:stop, reason, state}
+  end
+
+  @impl GenStage
+  def handle_info(_, state), do: {:noreply, [], state}
+
+  @impl Broadway.Producer
   def prepare_for_draining(state) do
-    if state.worker_task do
-      Task.shutdown(state.worker_task, :brutal_kill)
+    %{manager_pid: manager_pid} = state
+
+    # Single atomic call: stops the reader, nacks + clears buffered messages,
+    # removes them from outstanding, and sets draining mode on the StreamManager.
+    {:ok, _nacked_count} = StreamManager.prepare_for_draining(manager_pid)
+
+    {:noreply, [], %{state | draining: true}}
+  end
+
+  @impl GenStage
+  def terminate(_reason, state) do
+    %{manager_pid: manager_pid, config: config} = state
+
+    if Process.alive?(manager_pid) do
+      # Nack any messages still in outstanding so they are redelivered promptly
+      # instead of waiting for their ack deadline to expire naturally. This
+      # covers edge cases like on_failure: :noop (acknowledger does nothing) or
+      # the drain timeout firing before all processors complete.
+      #
+      # nack_ack_ids sends a cast to StreamManager (which routes to AckBatcher),
+      # then close/1 calls flush_batcher_if_alive. Since the cast is enqueued
+      # in AckBatcher before the flush, the nacked ack_ids are included in the
+      # final flush to the server.
+      outstanding = StreamManager.get_outstanding(manager_pid)
+      nack_ack_ids(manager_pid, config, outstanding)
+
+      StreamManager.close(manager_pid)
     end
 
-    {:noreply, [], %{state | worker_task: nil, draining: true}}
+    :persistent_term.erase(state.ack_ref)
+
+    :ok
   end
 
-  defp handle_receive_messages(%{draining: true} = state) do
-    {:noreply, [], state}
+  # --- Private ---
+
+  # Nack a list of ack_ids per the on_shutdown config. Used by terminate/2
+  # to nack remaining outstanding messages on shutdown.
+  defp nack_ack_ids(_manager_pid, _config, []), do: :ok
+  defp nack_ack_ids(_manager_pid, %{on_shutdown: :noop}, _ack_ids), do: :ok
+
+  defp nack_ack_ids(manager_pid, %{on_shutdown: {:nack, delay_seconds}}, ack_ids) do
+    StreamManager.modify_deadline(manager_pid, ack_ids, delay_seconds)
   end
 
-  defp handle_receive_messages(%{receive_timer: nil, demand: demand, worker_task: nil} = state)
-       when demand > 0 do
-    task = receive_messages_from_pubsub(state, demand)
+  defp validate_options!(opts) do
+    case NimbleOptions.validate(opts, Options.definition()) do
+      {:ok, validated} ->
+        # Cross-field validation: backoff_min must not exceed backoff_max.
+        # NimbleOptions validates each field independently but cannot express
+        # relationships between fields.
+        min = validated[:backoff_min]
+        max = validated[:backoff_max]
 
-    {:noreply, [], %{state | worker_task: task}}
+        if min > max do
+          raise ArgumentError,
+                "invalid BroadwayCloudPubSub.Producer options: :backoff_min (#{min}) must be <= :backoff_max (#{max})"
+        end
+
+        validated
+
+      {:error, err} ->
+        raise ArgumentError,
+              "invalid BroadwayCloudPubSub.Producer options: #{Exception.message(err)}"
+    end
   end
 
-  defp handle_receive_messages(state) do
-    {:noreply, [], state}
-  end
-
-  defp receive_messages_from_pubsub(state, total_demand) do
-    %{client: {client, opts}, ack_ref: ack_ref} = state
-
-    Task.async(fn ->
-      client.receive_messages(total_demand, Acknowledger.builder(ack_ref), opts)
+  defp assign_client_id(opts) do
+    Keyword.put_new_lazy(opts, :client_id, fn ->
+      :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
     end)
   end
 
-  defp schedule_receive_messages(interval) do
-    Process.send_after(self(), :receive_messages, interval)
+  defp assign_token_generator(opts) do
+    if Keyword.has_key?(opts, :token_generator) do
+      opts
+    else
+      generator = Options.make_token_generator(opts)
+      Keyword.put(opts, :token_generator, generator)
+    end
+  end
+
+  # When enable_message_ordering is true, inject a :partition_by function into
+  # each processor group so that messages with the same ordering_key are always
+  # routed to the same processor (ensuring sequential processing per key).
+  #
+  # Broadway's :partition_by option accepts a function that takes a Broadway.Message
+  # and returns a partition key. Broadway hashes the key and routes all messages
+  # with the same hash to the same processor stage. Messages with an empty or nil
+  # ordering_key are spread across processors via unique_integer (unordered messages
+  # should not be funneled to a single partition).
+  defp maybe_inject_partition_by(broadway_opts, opts) do
+    if opts[:enable_message_ordering] do
+      processors =
+        broadway_opts
+        |> Keyword.get(:processors, [])
+        |> Enum.map(fn {name, proc_opts} ->
+          {name, Keyword.put_new(proc_opts, :partition_by, &__MODULE__.partition_by/1)}
+        end)
+
+      Keyword.put(broadway_opts, :processors, processors)
+    else
+      broadway_opts
+    end
+  end
+
+  def partition_by(%Broadway.Message{metadata: %{orderingKey: ""}}) do
+    :erlang.unique_integer([:positive])
+  end
+
+  def partition_by(%Broadway.Message{metadata: %{orderingKey: key}}) when is_binary(key) do
+    :erlang.phash2(key)
+  end
+
+  def partition_by(_) do
+    :erlang.unique_integer([:positive])
   end
 end

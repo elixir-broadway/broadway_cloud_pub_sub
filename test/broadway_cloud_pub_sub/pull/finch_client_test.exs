@@ -1,10 +1,11 @@
-defmodule BroadwayCloudPubSub.PullClientTest do
+defmodule BroadwayCloudPubSub.Pull.FinchClientTest do
   use ExUnit.Case, async: true
 
   import ExUnit.CaptureLog
 
-  alias BroadwayCloudPubSub.Acknowledger
-  alias BroadwayCloudPubSub.PullClient
+  alias BroadwayCloudPubSub.Pull.Acknowledger
+  alias BroadwayCloudPubSub.Pull.FinchClient
+  alias BroadwayCloudPubSub.Test.TelemetryHelper
   alias Broadway.Message
 
   @pull_response """
@@ -144,7 +145,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     ack_ref = opts[:broadway][:name]
     fill_persistent_term(ack_ref, opts)
 
-    {:ok, config} = PullClient.init(opts)
+    {:ok, config} = FinchClient.init(opts)
     {ack_ref, Acknowledger.builder(ack_ref), config}
   end
 
@@ -180,9 +181,9 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         {:ok, @ordered_response}
       end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      assert [message] = PullClient.receive_messages(10, & &1, opts)
+      assert [message] = FinchClient.receive_messages(10, & &1, opts)
 
       assert message.metadata.messageId == "19917247038"
       assert message.metadata.orderingKey == "key1"
@@ -199,9 +200,9 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:max_retries, 3)
         |> Keyword.put(:retry_delay_ms, 0)
         |> Keyword.put(:retry_codes, [502])
-        |> PullClient.init()
+        |> FinchClient.init()
 
-      assert [_message] = PullClient.receive_messages(10, & &1, opts)
+      assert [_message] = FinchClient.receive_messages(10, & &1, opts)
     end
 
     test "returns a list of Broadway.Message when payloadFormat is NONE", %{
@@ -212,18 +213,18 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         {:ok, @no_payload_response}
       end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      assert [message] = PullClient.receive_messages(10, & &1, opts)
+      assert [message] = FinchClient.receive_messages(10, & &1, opts)
       assert message.metadata.messageId == "20240501001"
     end
 
     test "returns a list of Broadway.Message with :data and :metadata set", %{
       opts: base_opts
     } do
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      [message1, message2, message3, message4] = PullClient.receive_messages(10, & &1, opts)
+      [message1, message2, message3, message4] = FinchClient.receive_messages(10, & &1, opts)
 
       assert %Message{data: "Message1", metadata: %{publishTime: %DateTime{}}} = message1
 
@@ -259,9 +260,9 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         {:ok, @empty_response}
       end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      assert [] == PullClient.receive_messages(10, & &1, opts)
+      assert [] == FinchClient.receive_messages(10, & &1, opts)
     end
 
     test "if the request fails, returns an empty list and log the error", %{
@@ -270,16 +271,16 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     } do
       on_pubsub_request(server, fn _, _ -> {:error, 403, @empty_response} end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
       assert capture_log(fn ->
-               assert PullClient.receive_messages(10, & &1, opts) == []
+               assert FinchClient.receive_messages(10, & &1, opts) == []
              end) =~ "[error] Unable to fetch events from Cloud Pub/Sub - reason: "
     end
 
     test "send a projects.subscriptions.pull request with default options", %{opts: base_opts} do
-      {:ok, opts} = PullClient.init(base_opts)
-      PullClient.receive_messages(10, & &1, opts)
+      {:ok, opts} = FinchClient.init(base_opts)
+      FinchClient.receive_messages(10, & &1, opts)
 
       assert_received {:http_request_called, %{body: body, url: url}}
       assert body == %{"maxMessages" => 10}
@@ -287,37 +288,35 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     end
 
     test "request with custom :max_number_of_messages", %{opts: base_opts} do
-      {:ok, opts} = base_opts |> Keyword.put(:max_number_of_messages, 5) |> PullClient.init()
-      PullClient.receive_messages(10, & &1, opts)
+      {:ok, opts} = base_opts |> Keyword.put(:max_number_of_messages, 5) |> FinchClient.init()
+      FinchClient.receive_messages(10, & &1, opts)
 
       assert_received {:http_request_called, %{body: body, url: _url}}
       assert body["maxMessages"] == 5
     end
 
     test "exposes telemetry for pull requests", %{opts: base_opts} do
+      test_pid = self()
+
       :telemetry.attach(
         :start_handler,
         [:broadway_cloud_pub_sub, :pull_client, :receive_messages, :start],
-        fn _name, _measurements, metadata, _config ->
-          send(self(), {:start, metadata})
-        end,
-        %{}
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :start}
       )
 
       :telemetry.attach(
         :stop_handler,
         [:broadway_cloud_pub_sub, :pull_client, :receive_messages, :stop],
-        fn _name, measurements, _metadata, _config ->
-          send(self(), {:stop, measurements})
-        end,
-        %{}
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :stop}
       )
 
-      {:ok, opts} = base_opts |> Keyword.put(:max_number_of_messages, 5) |> PullClient.init()
-      PullClient.receive_messages(10, & &1, opts)
+      {:ok, opts} = base_opts |> Keyword.put(:max_number_of_messages, 5) |> FinchClient.init()
+      FinchClient.receive_messages(10, & &1, opts)
 
-      assert_received {:start, metadata}
-      assert_received {:stop, measurements}
+      assert_received {:start, _measurements, metadata}
+      assert_received {:stop, measurements, _metadata}
       assert metadata.demand == 10
       assert metadata.max_messages == 5
       assert is_integer(measurements.duration)
@@ -353,9 +352,9 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     end
 
     test "makes a projects.subscriptions.acknowledge request", %{opts: base_opts} do
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      PullClient.acknowledge(["1", "2", "3"], opts)
+      FinchClient.acknowledge(["1", "2", "3"], opts)
 
       assert_received {:http_request_called, %{body: body, url: url}}
 
@@ -372,37 +371,35 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         {:error, 503, @empty_response}
       end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
       assert capture_log(fn ->
-               assert PullClient.acknowledge(["1", "2"], opts) == :ok
+               assert FinchClient.acknowledge(["1", "2"], opts) == :ok
              end) =~ "[error] Unable to acknowledge messages with Cloud Pub/Sub - reason: "
     end
 
     test "emits telemetry events", %{opts: base_opts} do
+      test_pid = self()
+
       :telemetry.attach(
         :start_handler,
         [:broadway_cloud_pub_sub, :pull_client, :ack, :start],
-        fn _name, _measurements, metadata, _config ->
-          send(self(), {:start, metadata})
-        end,
-        %{}
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :start}
       )
 
       :telemetry.attach(
         :stop_handler,
         [:broadway_cloud_pub_sub, :pull_client, :ack, :stop],
-        fn _name, measurements, metadata, _config ->
-          send(self(), {:stop, measurements, metadata})
-        end,
-        %{}
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :stop}
       )
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
-      PullClient.acknowledge(["1", "2", "3"], opts)
+      FinchClient.acknowledge(["1", "2", "3"], opts)
 
-      assert_received {:start, metadata}
+      assert_received {:start, _measurements, metadata}
       assert metadata.name == Broadway3
       assert_received {:stop, measurements, metadata}
       assert is_integer(measurements.duration)
@@ -441,10 +438,10 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     test "makes a projects.subscriptions.modifyAckDeadline request", %{
       opts: base_opts
     } do
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
       ack_ids = ["1", "2"]
-      PullClient.put_deadline(ack_ids, 30, opts)
+      FinchClient.put_deadline(ack_ids, 30, opts)
 
       assert_received {:http_request_called, %{body: body, url: url}}
       assert body == %{"ackIds" => ack_ids, "ackDeadlineSeconds" => 30}
@@ -458,30 +455,30 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         {:error, 503, @empty_response}
       end)
 
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
       assert capture_log(fn ->
-               assert PullClient.put_deadline(["1", "2"], 60, opts) == :ok
+               assert FinchClient.put_deadline(["1", "2"], 60, opts) == :ok
              end) =~ "[error] Unable to put new ack deadline with Cloud Pub/Sub - reason: "
     end
   end
 
   describe "prepare_to_connect/2" do
     test "returns a child_spec for starting a Finch http pool " do
-      {[pool_spec], opts} = PullClient.prepare_to_connect(SomePipeline, [])
-      assert pool_spec == {Finch, name: SomePipeline.BroadwayCloudPubSub.PullClient}
-      assert opts == [finch: SomePipeline.BroadwayCloudPubSub.PullClient]
+      {[pool_spec], opts} = FinchClient.prepare_to_connect(SomePipeline, [])
+      assert pool_spec == {Finch, name: SomePipeline.BroadwayCloudPubSub.Pull.FinchClient}
+      assert opts == [finch: SomePipeline.BroadwayCloudPubSub.Pull.FinchClient]
     end
 
     test "allows custom finch" do
-      {specs, opts} = PullClient.prepare_to_connect(SomePipeline, finch: Foo)
+      {specs, opts} = FinchClient.prepare_to_connect(SomePipeline, finch: Foo)
 
       assert specs == []
       assert opts == [finch: Foo]
     end
   end
 
-  describe "integration with BroadwayCloudPubSub.Acknowledger" do
+  describe "integration with BroadwayCloudPubSub.Pull.Acknowledger" do
     setup %{server: server, base_url: base_url, finch: finch} do
       test_pid = self()
 
@@ -521,7 +518,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
            # will be injected by Broadway at runtime
            broadway: [name: :Broadway3],
            base_url: base_url,
-           client: PullClient,
+           client: FinchClient,
            finch: finch,
            max_number_of_messages: 10,
            subscription: "projects/foo/subscriptions/bar",
@@ -535,10 +532,10 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     test "returns a list of Broadway.Message structs with ack builder", %{
       opts: base_opts
     } do
-      {:ok, opts} = PullClient.init(base_opts)
+      {:ok, opts} = FinchClient.init(base_opts)
 
       [message1, message2, message3, message4] =
-        PullClient.receive_messages(10, &{:ack, &1}, opts)
+        FinchClient.receive_messages(10, &{:ack, &1}, opts)
 
       assert {:ack, _} = message1.acknowledger
       assert {:ack, _} = message2.acknowledger
@@ -551,7 +548,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     } do
       {ack_ref, builder, opts} = init_with_ack_builder(base_opts)
 
-      messages = PullClient.receive_messages(10, builder, opts)
+      messages = FinchClient.receive_messages(10, builder, opts)
 
       {successful, failed} = Enum.split(messages, 1)
 
@@ -568,7 +565,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:on_success, :noop)
         |> init_with_ack_builder()
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, messages, [])
 
@@ -583,7 +580,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:on_success, :nack)
         |> init_with_ack_builder()
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, messages, [])
 
@@ -599,7 +596,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:on_success, {:nack, 300})
         |> init_with_ack_builder()
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, messages, [])
 
@@ -610,7 +607,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
     test "with default :on_failure, failed messages are ignored", %{opts: base_opts} do
       {ack_ref, builder, opts} = init_with_ack_builder(base_opts)
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, [], messages)
 
@@ -625,7 +622,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:on_failure, :nack)
         |> init_with_ack_builder()
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, [], messages)
 
@@ -640,7 +637,7 @@ defmodule BroadwayCloudPubSub.PullClientTest do
         |> Keyword.put(:on_failure, {:nack, 60})
         |> init_with_ack_builder()
 
-      [_, _, _, _] = messages = PullClient.receive_messages(10, builder, opts)
+      [_, _, _, _] = messages = FinchClient.receive_messages(10, builder, opts)
 
       Acknowledger.ack(ack_ref, [], messages)
 
@@ -653,9 +650,9 @@ defmodule BroadwayCloudPubSub.PullClientTest do
   defp fill_persistent_term(ack_ref, base_opts) do
     :persistent_term.put(ack_ref, %{
       base_url: Keyword.fetch!(base_opts, :base_url),
-      client: PullClient,
+      client: FinchClient,
       finch: Keyword.fetch!(base_opts, :finch),
-      on_failure: base_opts[:on_failure] || :noop,
+      on_failure: base_opts[:on_failure] || {:nack, 0},
       on_success: base_opts[:on_success] || :ack,
       subscription: "projects/test/subscriptions/test-subscription",
       token_generator: {__MODULE__, :generate_token, []},

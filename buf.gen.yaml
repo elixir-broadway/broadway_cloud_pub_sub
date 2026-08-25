@@ -1,0 +1,23 @@
+version: v2
+clean: true
+managed:
+  enabled: true
+inputs:
+  - zip_archive: https://github.com/googleapis/googleapis/archive/refs/heads/master.zip
+    strip_components: 1
+    paths:
+      - google/pubsub/v1
+plugins:
+  - local: protoc-gen-elixir
+    out: lib/broadway_cloud_pub_sub/proto
+    opt:
+      - paths=source_relative
+      - include_docs=true
+      - plugins=grpc
+      - package_prefix=broadway_cloud_pub_sub
+    # To add a new RPC in the future, append its fully-qualified method path
+    # here and re-run: buf generate
+    types:
+      - google.pubsub.v1.Subscriber.StreamingPull
+      - google.pubsub.v1.Subscriber.Acknowledge
+      - google.pubsub.v1.Subscriber.ModifyAckDeadline

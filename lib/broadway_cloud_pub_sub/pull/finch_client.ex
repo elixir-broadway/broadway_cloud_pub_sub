@@ -1,20 +1,24 @@
-defmodule BroadwayCloudPubSub.PullClient do
+defmodule BroadwayCloudPubSub.Pull.FinchClient do
   @moduledoc """
-  A subscriptions [pull client](https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull) built on `Finch`.
+  The default Pub/Sub pull client, built on `Finch`.
+
+  Implements the `BroadwayCloudPubSub.Pull.Client` behaviour and handles
+  [pull](https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull)
+  requests to the Cloud Pub/Sub REST API.
   """
   alias Broadway.Message
-  alias BroadwayCloudPubSub.Client
+  alias BroadwayCloudPubSub.Pull.MessageBuilder
   alias Finch.Response
 
   require Logger
 
-  @behaviour Client
+  @behaviour BroadwayCloudPubSub.Pull.Client
 
   @default_retry_codes [408, 500, 502, 503, 504, 522, 524]
   @default_retry_delay_ms 500
   @default_max_retries 10
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def prepare_to_connect(name, producer_opts) do
     case Keyword.fetch(producer_opts, :finch) do
       {:ok, nil} ->
@@ -40,12 +44,12 @@ defmodule BroadwayCloudPubSub.PullClient do
     {specs, producer_opts}
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def init(opts) do
     {:ok, Map.new(opts)}
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def receive_messages(demand, ack_builder, config) do
     max_messages = min(demand, config.max_number_of_messages)
 
@@ -68,7 +72,7 @@ defmodule BroadwayCloudPubSub.PullClient do
     )
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def put_deadline(ack_ids, ack_deadline_seconds, config) do
     payload = %{
       "ackIds" => ack_ids,
@@ -80,7 +84,7 @@ defmodule BroadwayCloudPubSub.PullClient do
     |> handle_response(:put_deadline)
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def acknowledge(ack_ids, config) do
     :telemetry.span(
       [:broadway_cloud_pub_sub, :pull_client, :ack],
@@ -142,13 +146,14 @@ defmodule BroadwayCloudPubSub.PullClient do
       |> decode_message()
       |> Map.pop("data")
 
-    metadata = %{
-      attributes: metadata["attributes"],
-      deliveryAttempt: delivery_attempt,
-      messageId: metadata["messageId"],
-      orderingKey: metadata["orderingKey"],
-      publishTime: parse_datetime(metadata["publishTime"])
-    }
+    metadata =
+      MessageBuilder.build_metadata(%{
+        message_id: metadata["messageId"],
+        ordering_key: metadata["orderingKey"],
+        publish_time: parse_datetime(metadata["publishTime"]),
+        delivery_attempt: delivery_attempt,
+        attributes: metadata["attributes"]
+      })
 
     %Message{
       data: data,

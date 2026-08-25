@@ -1,7 +1,7 @@
-defmodule BroadwayCloudPubSub.Acknowledger do
+defmodule BroadwayCloudPubSub.Pull.Acknowledger do
   @moduledoc false
   alias Broadway.Acknowledger
-  alias BroadwayCloudPubSub.{Client, Options}
+  alias BroadwayCloudPubSub.Pull.{Client, Options}
 
   @behaviour Acknowledger
 
