@@ -1,7 +1,7 @@
 defmodule BroadwayCloudPubSub.MixProject do
   use Mix.Project
 
-  @version "2.0.0-rc.0"
+  @version "2.0.0-rc.1"
   @description "A Google Cloud Pub/Sub connector for Broadway"
   @repo_url "https://github.com/dashbitco/broadway_cloud_pub_sub"
 
