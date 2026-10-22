@@ -1,10 +1,10 @@
-defmodule BroadwayCloudPubSub.Client do
+defmodule BroadwayCloudPubSub.Pull.Client do
   @moduledoc """
-  A generic behaviour to implement Pub/Sub Clients for `BroadwayCloudPubSub.Producer`.
+  A generic behaviour to implement Pub/Sub Clients for `BroadwayCloudPubSub.Pull.Producer`.
 
   This module defines callbacks to normalize options and receive messages
   from a Cloud Pub/Sub topic. Modules that implement this behaviour should be passed
-  as the `:client` option from `BroadwayCloudPubSub.Producer`.
+  as the `:client` option from `BroadwayCloudPubSub.Pull.Producer`.
   """
 
   alias Broadway.Message
