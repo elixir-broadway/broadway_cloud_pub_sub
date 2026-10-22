@@ -21,6 +21,7 @@ defmodule BroadwayCloudPubSub.Pull.MessageBuilder do
     * `:message_id` — the Pub/Sub message ID
     * `:ordering_key` — the ordering key (may be `nil` or `""`)
     * `:publish_time` — a `%DateTime{}` or `nil`
+    * `:subscription` — the subscription name
     * `:delivery_attempt` — a positive integer or `nil`
     * `:attributes` — a `%{String.t() => String.t()}` map or `nil`
 
@@ -34,29 +35,48 @@ defmodule BroadwayCloudPubSub.Pull.MessageBuilder do
         orderingKey: ordering_key,
         publishTime: publish_time,
         deliveryAttempt: delivery_attempt,
-        attributes: attributes
+        attributes: attributes,
+        subscription: subscription,
+        received_at: received_at
       }
+
+  `received_at` is stamped with `System.system_time()/0` (native time unit)
+  when the metadata is built, so it marks when the message reached the pipeline.
   """
+
+  @type metadata :: %{
+          messageId: term(),
+          orderingKey: term(),
+          subscription: String.t(),
+          received_at: integer(),
+          publishTime: DateTime.t() | nil,
+          deliveryAttempt: non_neg_integer() | nil,
+          attributes: map() | nil
+        }
   @spec build_metadata(%{
           message_id: term(),
           ordering_key: term(),
+          subscription: String.t(),
           publish_time: DateTime.t() | nil,
           delivery_attempt: non_neg_integer() | nil,
           attributes: map() | nil
-        }) :: map()
+        }) :: metadata
   def build_metadata(%{
         message_id: message_id,
         ordering_key: ordering_key,
         publish_time: publish_time,
         delivery_attempt: delivery_attempt,
-        attributes: attributes
+        attributes: attributes,
+        subscription: subscription
       }) do
     %{
       messageId: message_id,
       orderingKey: ordering_key,
       publishTime: publish_time,
       deliveryAttempt: delivery_attempt,
-      attributes: attributes
+      attributes: attributes,
+      subscription: subscription,
+      received_at: System.system_time()
     }
   end
 

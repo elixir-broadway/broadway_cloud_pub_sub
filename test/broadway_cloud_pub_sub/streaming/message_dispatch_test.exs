@@ -224,10 +224,10 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
   end
 
   # ============================================================
-  # build_broadway_message/2
+  # build_broadway_message/3
   # ============================================================
 
-  describe "build_broadway_message/2" do
+  describe "build_broadway_message/3" do
     test "constructs correct Broadway.Message with acknowledger tuple" do
       received_msg = %{
         ack_id: "test-ack-id",
@@ -242,7 +242,13 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
       }
 
       ack_ref = {:my_pipeline, 0}
-      msg = MessageDispatch.build_broadway_message(received_msg, ack_ref)
+
+      msg =
+        MessageDispatch.build_broadway_message(
+          received_msg,
+          ack_ref,
+          "projects/p/subscriptions/s"
+        )
 
       assert %Broadway.Message{} = msg
       assert msg.data == "hello"
@@ -250,6 +256,14 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
       assert msg.metadata.orderingKey == "order-1"
       assert msg.metadata.deliveryAttempt == 2
       assert msg.metadata.attributes == %{"key" => "value"}
+      assert msg.metadata.subscription == "projects/p/subscriptions/s"
+      assert is_integer(msg.metadata.received_at)
+
+      age_s =
+        System.system_time(:second) -
+          System.convert_time_unit(msg.metadata.received_at, :native, :second)
+
+      assert age_s in 0..5
 
       {mod, ref, data} = msg.acknowledger
       assert mod == BroadwayCloudPubSub.Streaming.Acknowledger
@@ -270,7 +284,12 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
         delivery_attempt: 1
       }
 
-      msg = MessageDispatch.build_broadway_message(received_msg, {:test, 0})
+      msg =
+        MessageDispatch.build_broadway_message(
+          received_msg,
+          {:test, 0},
+          "projects/p/subscriptions/s"
+        )
 
       assert msg.metadata.publishTime == nil
     end
@@ -288,7 +307,12 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
         delivery_attempt: 1
       }
 
-      msg = MessageDispatch.build_broadway_message(received_msg, {:test, 0})
+      msg =
+        MessageDispatch.build_broadway_message(
+          received_msg,
+          {:test, 0},
+          "projects/p/subscriptions/s"
+        )
 
       assert msg.metadata.attributes == %{}
     end

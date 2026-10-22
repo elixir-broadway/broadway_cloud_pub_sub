@@ -6,7 +6,6 @@ defmodule BroadwayCloudPubSub.Pull.FinchClient do
   [pull](https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull)
   requests to the Cloud Pub/Sub REST API.
   """
-  alias Broadway.Message
   alias BroadwayCloudPubSub.Pull.MessageBuilder
   alias Finch.Response
 
@@ -65,7 +64,7 @@ defmodule BroadwayCloudPubSub.Pull.FinchClient do
           config
           |> execute(:pull, %{"maxMessages" => max_messages})
           |> handle_response(:receive_messages)
-          |> wrap_received_messages(ack_builder)
+          |> wrap_received_messages(ack_builder, config.subscription)
 
         {result, %{name: config.broadway[:name], max_messages: max_messages, demand: demand}}
       end
@@ -126,13 +125,13 @@ defmodule BroadwayCloudPubSub.Pull.FinchClient do
     :ok
   end
 
-  defp wrap_received_messages(pub_sub_messages, ack_builder) do
+  defp wrap_received_messages(pub_sub_messages, ack_builder, subscription) do
     Enum.map(pub_sub_messages, fn pub_sub_msg ->
-      pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder)
+      pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder, subscription)
     end)
   end
 
-  defp pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder) do
+  defp pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder, subscription) do
     %{"ackId" => ack_id, "message" => message} = pub_sub_msg
 
     # 2022-09-21 (MC) The docs falsely claim the following:
@@ -141,25 +140,23 @@ defmodule BroadwayCloudPubSub.Pull.FinchClient do
     # https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull#receivedmessage
     delivery_attempt = Map.get(pub_sub_msg, "deliveryAttempt")
 
-    {data, metadata} =
+    {data, fields} =
       message
       |> decode_message()
       |> Map.pop("data")
 
-    metadata =
-      MessageBuilder.build_metadata(%{
-        message_id: metadata["messageId"],
-        ordering_key: metadata["orderingKey"],
-        publish_time: parse_datetime(metadata["publishTime"]),
+    MessageBuilder.build_message(
+      data,
+      %{
+        message_id: fields["messageId"],
+        ordering_key: fields["orderingKey"],
+        publish_time: parse_datetime(fields["publishTime"]),
+        subscription: subscription,
         delivery_attempt: delivery_attempt,
-        attributes: metadata["attributes"]
-      })
-
-    %Message{
-      data: data,
-      metadata: metadata,
-      acknowledger: ack_builder.(ack_id)
-    }
+        attributes: fields["attributes"]
+      },
+      ack_builder.(ack_id)
+    )
   end
 
   defp parse_datetime(nil), do: nil

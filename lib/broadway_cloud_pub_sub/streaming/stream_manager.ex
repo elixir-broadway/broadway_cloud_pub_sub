@@ -224,7 +224,14 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
 
   def handle_info({:stream_messages, messages}, state) do
     broadway_messages =
-      Enum.map(messages, &MessageDispatch.build_broadway_message(&1, state.config.ack_ref))
+      Enum.map(
+        messages,
+        &MessageDispatch.build_broadway_message(
+          &1,
+          state.config.ack_ref,
+          state.config.subscription
+        )
+      )
 
     ack_ids = Enum.map(messages, & &1.ack_id)
     now = now_ms()

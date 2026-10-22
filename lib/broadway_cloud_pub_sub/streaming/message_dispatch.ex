@@ -146,28 +146,30 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatch do
   Builds a `Broadway.Message` from a decoded Pub/Sub ReceivedMessage and
   an ack_ref.
   """
-  @spec build_broadway_message(map(), term()) :: Broadway.Message.t()
+  @spec build_broadway_message(map(), term(), String.t()) :: Broadway.Message.t()
   def build_broadway_message(
         %{ack_id: ack_id, message: pubsub_msg, delivery_attempt: delivery_attempt},
-        ack_ref
+        ack_ref,
+        subscription
       ) do
     acknowledger = BroadwayCloudPubSub.Streaming.Acknowledger.builder(ack_ref).(ack_id)
 
-    %Broadway.Message{
-      data: pubsub_msg.data,
-      metadata: build_metadata(pubsub_msg, delivery_attempt),
-      acknowledger: acknowledger
-    }
+    MessageBuilder.build_message(
+      pubsub_msg.data,
+      metadata_fields(pubsub_msg, delivery_attempt, subscription),
+      acknowledger
+    )
   end
 
-  defp build_metadata(msg, delivery_attempt) do
-    MessageBuilder.build_metadata(%{
+  defp metadata_fields(msg, delivery_attempt, subscription) do
+    %{
       message_id: msg.message_id,
       ordering_key: msg.ordering_key,
       publish_time: to_datetime(msg.publish_time),
+      subscription: subscription,
       delivery_attempt: delivery_attempt,
       attributes: Map.new(msg.attributes || [])
-    })
+    }
   end
 
   defp to_datetime(nil), do: nil
