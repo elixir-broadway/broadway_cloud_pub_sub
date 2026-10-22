@@ -150,7 +150,21 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     assert_receive {:adapter_connected, ctrl}, 2_000
     # Wait for the initial StreamingPullRequest so the stream is fully open
     assert_receive {:adapter_call, {:send_data, _}}, 2_000
+    await_stream_opened(pid)
     fun.(pid, ctrl)
+  end
+
+  # The reader sends the initial request (observed by the test) and then
+  # {:stream_opened, ...} to the manager, so the test can see the request before
+  # the manager has handled the open. Poll until the manager has caught up.
+  defp await_stream_opened(pid, retries \\ 400) do
+    if :sys.get_state(pid).grpc_stream do
+      :ok
+    else
+      if retries == 0, do: flunk("stream never opened")
+      Process.sleep(5)
+      await_stream_opened(pid, retries - 1)
+    end
   end
 
   # ============================================================
