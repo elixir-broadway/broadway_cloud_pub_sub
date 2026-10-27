@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.0.0-rc.2]
 
-- Add `subscriber` and `received_at` to message metadata.
+- Add `subscription` and `receivedAt` to message metadata.
 
 ## [2.0.0-rc.1]
 

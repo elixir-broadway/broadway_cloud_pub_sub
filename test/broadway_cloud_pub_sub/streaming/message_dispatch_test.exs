@@ -257,13 +257,9 @@ defmodule BroadwayCloudPubSub.Streaming.MessageDispatchTest do
       assert msg.metadata.deliveryAttempt == 2
       assert msg.metadata.attributes == %{"key" => "value"}
       assert msg.metadata.subscription == "projects/p/subscriptions/s"
-      assert is_integer(msg.metadata.received_at)
+      assert %DateTime{} = msg.metadata.receivedAt
 
-      age_s =
-        System.system_time(:second) -
-          System.convert_time_unit(msg.metadata.received_at, :native, :second)
-
-      assert age_s in 0..5
+      assert DateTime.diff(DateTime.utc_now(), msg.metadata.receivedAt, :second) in 0..5
 
       {mod, ref, data} = msg.acknowledger
       assert mod == BroadwayCloudPubSub.Streaming.Acknowledger

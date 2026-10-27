@@ -188,7 +188,7 @@ defmodule BroadwayCloudPubSub.Pull.FinchClientTest do
       assert message.metadata.messageId == "19917247038"
       assert message.metadata.orderingKey == "key1"
       assert message.metadata.subscription == "projects/foo/subscriptions/bar"
-      assert is_integer(message.metadata.received_at)
+      assert %DateTime{} = message.metadata.receivedAt
     end
 
     test "retries if the option is set", %{
@@ -233,7 +233,7 @@ defmodule BroadwayCloudPubSub.Pull.FinchClientTest do
       assert message1.metadata.messageId == "19917247034"
       assert message1.metadata.deliveryAttempt == 1
       assert message1.metadata.subscription == "projects/foo/subscriptions/bar"
-      assert is_integer(message1.metadata.received_at)
+      assert %DateTime{} = message1.metadata.receivedAt
 
       assert %{
                "foo" => "bar",

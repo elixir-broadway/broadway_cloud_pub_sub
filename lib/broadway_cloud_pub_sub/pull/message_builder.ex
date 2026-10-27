@@ -37,18 +37,18 @@ defmodule BroadwayCloudPubSub.Pull.MessageBuilder do
         deliveryAttempt: delivery_attempt,
         attributes: attributes,
         subscription: subscription,
-        received_at: received_at
+        receivedAt: received_at
       }
 
-  `received_at` is stamped with `System.system_time()/0` (native time unit)
-  when the metadata is built, so it marks when the message reached the pipeline.
+  `receivedAt` is stamped with `DateTime.utc_now/0` when the metadata is built,
+   so it marks when the message reached the pipeline.
   """
 
   @type metadata :: %{
           messageId: term(),
           orderingKey: term(),
           subscription: String.t(),
-          received_at: integer(),
+          receivedAt: DateTime.t(),
           publishTime: DateTime.t() | nil,
           deliveryAttempt: non_neg_integer() | nil,
           attributes: map() | nil
@@ -76,7 +76,7 @@ defmodule BroadwayCloudPubSub.Pull.MessageBuilder do
       deliveryAttempt: delivery_attempt,
       attributes: attributes,
       subscription: subscription,
-      received_at: System.system_time()
+      receivedAt: DateTime.utc_now()
     }
   end
 
