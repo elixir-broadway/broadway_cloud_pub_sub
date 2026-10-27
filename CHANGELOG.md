@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [2.0.0-rc.3]
+
+- Renamed `received_at` to `receivedAt` in message metadata and change it from system time to DateTime.
+
 ## [2.0.0-rc.2]
 
-- Add `subscription` and `receivedAt` to message metadata.
+- Add `subscription` and `received_at` to message metadata.
 
 ## [2.0.0-rc.1]
 
