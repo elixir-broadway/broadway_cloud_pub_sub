@@ -1,4 +1,4 @@
-defmodule BroadwayCloudPubSub.Options do
+defmodule BroadwayCloudPubSub.Pull.Options do
   @moduledoc false
 
   @default_base_url "https://pubsub.googleapis.com"
@@ -14,19 +14,19 @@ defmodule BroadwayCloudPubSub.Options do
     broadway: [type: :any, doc: false],
     client: [
       type: {:or, [:atom, :mod_arg]},
-      default: BroadwayCloudPubSub.PullClient,
+      default: BroadwayCloudPubSub.Pull.FinchClient,
       doc: """
-      A module that implements the BroadwayCloudPubSub.Client behaviour.
+      A module that implements the `BroadwayCloudPubSub.Pull.Client` behaviour.
       This module is responsible for fetching and acknowledging the messages.
       Pay attention that all options passed to the producer will be forwarded
       to the client. It's up to the client to normalize the options it needs.
 
-      The BroadwayCloudPubSub.PullClient is the default client and will
+      `BroadwayCloudPubSub.Pull.FinchClient` is the default client and will
       automatically retry the following errors [408, 500, 502, 503, 504, 522,
       524] up to 10 times with a 500ms pause between retries. This can be
       configured by passing the module with options to the client:
 
-        {BroadwayCloudPubSub.PullClient,
+        {BroadwayCloudPubSub.Pull.FinchClient,
           retry_codes: [502, 503],
           retry_delay_ms: 300,
           max_retries: 5}
@@ -59,8 +59,12 @@ defmodule BroadwayCloudPubSub.Options do
       See the "Acknowledgements" section below for all the possible values.
       This option can also be changed for each message through
       `Broadway.Message.configure_ack/2`.
+
+      Defaults to `{:nack, 0}`, which makes failed messages immediately
+      available for redelivery. This matches the behaviour of the official
+      Google Cloud Pub/Sub client libraries.
       """,
-      default: :noop
+      default: {:nack, 0}
     ],
     on_success: [
       type:
@@ -198,7 +202,7 @@ defmodule BroadwayCloudPubSub.Options do
           Broadway.start_link(
             producers: [
               default: [
-                module: {BroadwayCloudPubSub.Producer,
+                module: {BroadwayCloudPubSub.Pull.Producer,
                   token_generator: {MyGenerator, :generate, ["foo"]}
                 }
               ]
