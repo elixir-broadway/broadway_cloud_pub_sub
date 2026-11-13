@@ -46,6 +46,19 @@ defmodule BroadwayCloudPubSub.Producer do
 
   #{NimbleOptions.docs(BroadwayCloudPubSub.Streaming.Options.definition())}
 
+  ## Message metadata
+
+  Each `Broadway.Message` carries the following metadata keys:
+
+    * `:messageId` - the Pub/Sub message ID
+    * `:orderingKey` - the ordering key (may be `""`)
+    * `:publishTime` - a `DateTime`, or `nil`
+    * `:deliveryAttempt` - an integer, or `nil`
+    * `:attributes` - a map of message attributes, or `nil`
+    * `:subscription` - the subscription name (a string)
+    * `:receivedAt` - a `DateTime` stamped with `DateTime.utc_now/0` when the
+      message reaches the pipeline
+
   ## Acknowledgements
 
   Use `:on_success` and `:on_failure` to control how messages are acknowledged
@@ -101,11 +114,12 @@ defmodule BroadwayCloudPubSub.Producer do
   (the server requires at least 60 seconds between extensions for exactly-once
   subscriptions).
 
-  For exactly-once subscriptions, increase `:retry_deadline_ms` to 600,000ms
-  (10 minutes) to allow the unary RPC client enough time to retry transient
+  For exactly-once subscriptions, the library automatically uses a
+  `:retry_deadline_ms` of 600,000ms (10 minutes, the maximum) regardless of the
+  configured value, giving the unary RPC client enough time to retry transient
   ack failures - the server requires successful ack receipt before guaranteeing
-  exactly-once semantics. The library automatically adjusts `:retry_deadline_ms`
-  when the subscription's exactly-once status changes at runtime.
+  exactly-once semantics. The configured value is restored if exactly-once
+  delivery is later disabled on the subscription.
 
   ## Message ordering
 

@@ -13,6 +13,11 @@ sub-namespace as a fallback for environments where gRPC is unavailable.
 | [3](#3-broadwaycloudpubsubclient-behaviour-renamed) | `BroadwayCloudPubSub.Client` behaviour → `BroadwayCloudPubSub.Pull.Client` | Rename if you implemented a custom pull client |
 | [4](#4-on_failure-default-changed-noop--nack-0) | `on_failure` default: `:noop` → `{:nack, 0}` | Set `on_failure: :noop` explicitly to keep old behaviour |
 
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
+
 ---
 
 ## Should you switch to streaming?
@@ -47,6 +52,11 @@ If none of those apply, switch to the streaming producer.
 [gcp-streamingpull]: https://cloud.google.com/pubsub/docs/pull#streamingpull_api
 [gcp-pull-api]: https://cloud.google.com/pubsub/docs/pull#pull_api
 
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
+
 ---
 
 ## 1. New default producer
@@ -61,18 +71,17 @@ You have two migration paths:
 
 ### Path A: switch to the new streaming producer (recommended)
 
-Add the gRPC dependencies to `mix.exs`. You must pick one HTTP/2 adapter for
-the gRPC connection: either `:gun`, or `:mint` together with `:castore`:
+`:grpc` and `:protobuf` are installed automatically. You must pick one HTTP/2
+adapter for the gRPC connection and add it to `mix.exs`: either `:gun`, or
+`:mint` together with `:castore`:
 
 ```elixir
 def deps do
   [
     {:broadway_cloud_pub_sub, "~> 2.0"},
     {:goth, "~> 1.3"},
-    {:grpc, "~> 1.0"},
-    {:protobuf, "~> 0.12"},
     # Pick one HTTP/2 adapter:
-    {:gun, "~> 2.2"},
+    {:gun, "~> 2.4"},
     # or
     # {:mint, "~> 1.9"},
     # {:castore, "~> 1.0"}
@@ -141,7 +150,7 @@ the full option reference.
 
 ### Path B: keep the HTTP pull producer
 
-If gRPC is not available in your environment, you want to continue using the pull producer, or want to do progresive rollout supporting both, simply rename the module:
+If gRPC is not available in your environment, you want to continue using the pull producer, or want to do progressive rollout supporting both, simply rename the module:
 
 ```elixir
 # 1.x
@@ -163,8 +172,19 @@ All existing options (`:goth`, `:subscription`, `:token_generator`, `:base_url`,
 `:max_number_of_messages`, `:receive_interval`, `:on_success`, `:on_failure`,
 `:client`) are unchanged.
 
-The `grpc`, `protobuf`, `gun`, `mint` and `castore` dependencies are **not** required when using only
-`BroadwayCloudPubSub.Pull.Producer`.
+`:grpc` and `:protobuf` are regular dependencies of `broadway_cloud_pub_sub` and
+are installed automatically, so pull-only users will also compile `grpc`,
+`grpc_core`, `googleapis` and `protobuf`. The generated Pub/Sub protobuf modules
+live in the library and can't be conditionally compiled, so these packages are
+required for everyone.
+
+The HTTP/2 adapter packages (`gun`, `mint`, `castore`) are **not** required when
+using only `BroadwayCloudPubSub.Pull.Producer`.
+
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
 
 ---
 
@@ -182,6 +202,11 @@ client: BroadwayCloudPubSub.PullClient
 # 2.0
 client: BroadwayCloudPubSub.Pull.FinchClient
 ```
+
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
 
 ---
 
@@ -206,6 +231,11 @@ end
 ```
 
 The callback signatures are unchanged.
+
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
 
 ---
 
@@ -236,6 +266,11 @@ For most applications the new default is the right behaviour. A failed message
 is retried immediately rather than holding up the subscription until its deadline
 expires.
 
+## Message metadata
+
+`subscription` and `receivedAt` are new metadata keys, available on both
+producers. They are additive and not a breaking change.
+
 ---
 
 ## Quick-reference: all renamed modules
@@ -246,5 +281,5 @@ expires.
 | *(new in 2.0)* | `BroadwayCloudPubSub.Producer` (streaming, recommended) |
 | `BroadwayCloudPubSub.PullClient` | `BroadwayCloudPubSub.Pull.FinchClient` |
 | `BroadwayCloudPubSub.Client` | `BroadwayCloudPubSub.Pull.Client` |
-| `BroadwayCloudPubSub.Options` | BroadwayCloudPubSub.Pull.Options (internal) |
-| `BroadwayCloudPubSub.Acknowledger` | BroadwayCloudPubSub.Pull.Acknowledger (internal) |
+| `BroadwayCloudPubSub.Options` | <code>BroadwayCloudPubSub.Pull.Options</code> (internal) |
+| `BroadwayCloudPubSub.Acknowledger` | <code>BroadwayCloudPubSub.Pull.Acknowledger</code> (internal) |

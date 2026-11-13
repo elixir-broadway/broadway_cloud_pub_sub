@@ -102,6 +102,19 @@ defmodule BroadwayCloudPubSub.Pull.Producer do
   messages from `"projects/my-project/subscriptions/my_subscription"` and sends
   them downstream.
 
+  ## Message metadata
+
+  Each `Broadway.Message` carries the following metadata keys:
+
+    * `:messageId` - the Pub/Sub message ID
+    * `:orderingKey` - the ordering key (may be `""`)
+    * `:publishTime` - a `DateTime`, or `nil`
+    * `:deliveryAttempt` - an integer, or `nil`
+    * `:attributes` - a map of message attributes, or `nil`
+    * `:subscription` - the subscription name (a string)
+    * `:receivedAt` - a `DateTime` stamped with `DateTime.utc_now/0` when the
+      message reaches the pipeline
+
   ## Telemetry
 
   This producer emits a few [Telemetry](https://github.com/beam-telemetry/telemetry)

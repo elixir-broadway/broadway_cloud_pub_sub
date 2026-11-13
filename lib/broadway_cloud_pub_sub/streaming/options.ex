@@ -193,11 +193,11 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       Maximum total time in milliseconds to keep retrying a failed acknowledge or
       modifyAckDeadline request before giving up and dropping the ack_ids.
 
-          The default of 60,000ms (60 seconds) applies to standard delivery subscriptions.
-          When exactly-once delivery is detected from subscription properties, the library
-          automatically switches to 600,000ms (600 seconds) for exactly-once acks. The
-          configured value is restored if exactly-once delivery is later disabled on the
-          subscription.
+      The default of 60,000ms (60 seconds) applies to standard delivery subscriptions.
+      When exactly-once delivery is detected from subscription properties, the library
+      automatically overrides the configured value with 600,000ms (600 seconds, the
+      maximum) for as long as exactly-once is enabled. The configured value is restored
+      if exactly-once delivery is later disabled on the subscription.
       """
     ],
 

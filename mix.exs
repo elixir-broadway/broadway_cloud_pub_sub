@@ -1,9 +1,9 @@
 defmodule BroadwayCloudPubSub.MixProject do
   use Mix.Project
 
-  @version "2.0.0-rc.3"
+  @version "2.0.0"
   @description "A Google Cloud Pub/Sub connector for Broadway"
-  @repo_url "https://github.com/dashbitco/broadway_cloud_pub_sub"
+  @repo_url "https://github.com/elixir-broadway/broadway_cloud_pub_sub"
 
   def project do
     [
@@ -40,10 +40,10 @@ defmodule BroadwayCloudPubSub.MixProject do
       {:finch, "~> 0.9"},
       {:jason, "~> 1.0"},
       {:nimble_options, "~> 0.4 or ~> 1.0"},
-      {:telemetry, "~> 0.4.3 or ~> 1.0"},
+      {:telemetry, "~> 1.0"},
       {:goth, "~> 1.3", optional: true},
-      {:grpc, "~> 1.0", optional: true},
-      {:protobuf, "~> 0.17", optional: true},
+      {:grpc, "~> 1.0"},
+      {:protobuf, "~> 0.17"},
       {:ex_doc, "~> 0.23", only: :docs},
       {:bypass, "~> 2.1", only: :test}
     ]

@@ -1,6 +1,6 @@
 # BroadwayCloudPubSub
 
-[![CI](https://github.com/dashbitco/broadway_cloud_pub_sub/actions/workflows/ci.yml/badge.svg)](https://github.com/dashbitco/broadway_cloud_pub_sub/actions/workflows/ci.yml)
+[![CI](https://github.com/elixir-broadway/broadway_cloud_pub_sub/actions/workflows/ci.yml/badge.svg)](https://github.com/elixir-broadway/broadway_cloud_pub_sub/actions/workflows/ci.yml)
 
 A Google Cloud Pub/Sub connector for [Broadway](https://github.com/dashbitco/broadway).
 
@@ -29,18 +29,17 @@ Documentation can be found at [https://hexdocs.pm/broadway_cloud_pub_sub](https:
 
 ## Installation
 
-Add `:broadway_cloud_pub_sub` to your dependencies, along with an HTTP/2 adapter
-for `:grpc`:
+Add `:broadway_cloud_pub_sub` to your dependencies. `:grpc` and `:protobuf` are
+installed automatically. To use the streaming producer, also add an HTTP/2
+adapter for `:grpc`:
 
 ```elixir
 def deps do
   [
     {:broadway_cloud_pub_sub, "~> 2.0"},
     {:goth, "~> 1.3"},
-    {:grpc, "~> 1.0"},
-    {:protobuf, "~> 0.12"},
     # Pick one HTTP/2 adapter:
-    {:gun, "~> 2.2"},
+    {:gun, "~> 2.4"},
     # or
     # {:mint, "~> 1.9"},
     # {:castore, "~> 1.0"}
@@ -51,13 +50,13 @@ end
 > The [goth](https://hexdocs.pm/goth) package handles Google Authentication and
 > is required for the default token generator.
 >
-> The `grpc` and `protobuf` packages are required by
-> `BroadwayCloudPubSub.Producer`. You must pick one HTTP/2 adapter for the gRPC
-> connection and add it to your `mix.exs`: either `:gun`, or `:mint` together
-> with `:castore`.
+> `BroadwayCloudPubSub.Producer` needs one HTTP/2 adapter for the gRPC
+> connection, which you add to your `mix.exs`: either `:gun`, or `:mint`
+> together with `:castore`.
 >
-> If you only use `BroadwayCloudPubSub.Pull.Producer` you may omit `:grpc`,
-> `:protobuf`, and the adapter packages.
+> If you only use `BroadwayCloudPubSub.Pull.Producer` you don't need any of the
+> adapter packages, but `:grpc` and `:protobuf` are still compiled because the
+> generated protobuf modules are part of this library.
 
 ## Usage
 
@@ -85,7 +84,7 @@ so you select one by adding it to your application's `mix.exs` (see
 [Installation](#installation)).
 
 - `:gun` (default): [Gun](https://github.com/ninenines/gun) HTTP/2 client.
-  Add `{:gun, "~> 2.2"}` to your deps.
+  Add `{:gun, "~> 2.4"}` to your deps.
 - `:mint`: [Mint](https://github.com/elixir-mint/mint) HTTP/2 client.
   Add `{:mint, "~> 1.9"}` and `{:castore, "~> 1.0"}` to your deps.
 
@@ -141,9 +140,8 @@ under `BroadwayCloudPubSub.Pull.Producer`.
 {BroadwayCloudPubSub.Pull.Producer, goth: MyApp.Goth, subscription: "..."}
 ```
 
-The streaming producer requires `:grpc`, `:protobuf`, and an HTTP/2 adapter
-(`:gun` or `:mint` + `:castore`). If you stay on the pull producer those
-packages are not needed.
+The streaming producer requires an HTTP/2 adapter (`:gun` or `:mint` +
+`:castore`). If you stay on the pull producer the adapter is not needed.
 
 #### Breaking change 2: [two modules renamed](docs/upgrade_to_2.0.md#2-broadwaycloudpubsubpullclient-renamed) (only if referenced directly)
 
