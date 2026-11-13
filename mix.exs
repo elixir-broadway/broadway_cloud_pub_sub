@@ -1,9 +1,9 @@
 defmodule BroadwayCloudPubSub.MixProject do
   use Mix.Project
 
-  @version "1.0.0"
+  @version "2.0.0"
   @description "A Google Cloud Pub/Sub connector for Broadway"
-  @repo_url "https://github.com/dashbitco/broadway_cloud_pub_sub"
+  @repo_url "https://github.com/elixir-broadway/broadway_cloud_pub_sub"
 
   def project do
     [
@@ -18,6 +18,10 @@ defmodule BroadwayCloudPubSub.MixProject do
       docs: docs(),
       package: package()
     ]
+  end
+
+  def cli do
+    [preferred_envs: [docs: :docs]]
   end
 
   def application do
@@ -35,9 +39,11 @@ defmodule BroadwayCloudPubSub.MixProject do
       {:broadway, "~> 1.0"},
       {:finch, "~> 0.9"},
       {:jason, "~> 1.0"},
-      {:nimble_options, "~> 0.3.7 or ~> 0.4 or ~> 1.0"},
-      {:telemetry, "~> 0.4.3 or ~> 1.0"},
+      {:nimble_options, "~> 0.4 or ~> 1.0"},
+      {:telemetry, "~> 1.0"},
       {:goth, "~> 1.3", optional: true},
+      {:grpc, "~> 1.0"},
+      {:protobuf, "~> 0.17"},
       {:ex_doc, "~> 0.23", only: :docs},
       {:bypass, "~> 2.1", only: :test}
     ]
@@ -46,12 +52,33 @@ defmodule BroadwayCloudPubSub.MixProject do
   defp docs do
     [
       main: "BroadwayCloudPubSub.Producer",
-      nest_modules_by_prefix: [BroadwayCloudPubSub],
+      nest_modules_by_prefix: [
+        BroadwayCloudPubSub,
+        BroadwayCloudPubSub.Streaming,
+        BroadwayCloudPubSub.Pull,
+        BroadwayCloudPubSub.Google.Pubsub.V1
+      ],
       source_ref: "v#{@version}",
       source_url: @repo_url,
       extras: [
         "README.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "docs/upgrade_to_2.0.md"
+      ],
+      groups_for_modules: [
+        Streaming: [
+          BroadwayCloudPubSub.Producer,
+          BroadwayCloudPubSub.Streaming.Client,
+          BroadwayCloudPubSub.Streaming.GrpcClient
+        ],
+        Pull: [
+          BroadwayCloudPubSub.Pull.Producer,
+          BroadwayCloudPubSub.Pull.Client,
+          BroadwayCloudPubSub.Pull.FinchClient
+        ],
+        "Protobuf (generated)": [
+          ~r"BroadwayCloudPubSub.Google.Pubsub.V1."
+        ]
       ]
     ]
   end

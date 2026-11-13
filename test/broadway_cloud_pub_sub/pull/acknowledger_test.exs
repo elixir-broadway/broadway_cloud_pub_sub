@@ -1,13 +1,13 @@
-defmodule BroadwayCloudPubSub.AcknowledgerTest do
+defmodule BroadwayCloudPubSub.Pull.AcknowledgerTest do
   use ExUnit.Case
   alias Broadway.Message
-  alias BroadwayCloudPubSub.Client
-  alias BroadwayCloudPubSub.Acknowledger
+  alias BroadwayCloudPubSub.Pull.Client
+  alias BroadwayCloudPubSub.Pull.Acknowledger
 
   defmodule CallerClient do
-    alias BroadwayCloudPubSub.Acknowledger
+    alias BroadwayCloudPubSub.Pull.Acknowledger
 
-    @behaviour Client
+    @behaviour BroadwayCloudPubSub.Pull.Client
 
     @impl Client
     def init(opts) do
@@ -34,7 +34,7 @@ defmodule BroadwayCloudPubSub.AcknowledgerTest do
     :persistent_term.put(ack_ref, %{
       base_url: "http://localhost:8085",
       client: CallerClient,
-      on_failure: opts[:on_failure] || :noop,
+      on_failure: opts[:on_failure] || {:nack, 0},
       on_success: opts[:on_success] || :ack,
       subscription: "projects/test/subscriptions/test-subscription",
       # Required for the CallerClient
@@ -76,14 +76,14 @@ defmodule BroadwayCloudPubSub.AcknowledgerTest do
 
     test "sets defaults" do
       ack_data = %{ack_id: "1"}
-      expected = %{ack_id: "1", on_success: :ack, on_failure: :noop}
+      expected = %{ack_id: "1", on_success: :ack, on_failure: {:nack, 0}}
 
       assert {:ok, expected} == Acknowledger.configure(:ack_ref, ack_data, [])
     end
 
     test "set on_success with ignore" do
       ack_data = %{ack_id: "1"}
-      expected = %{ack_id: "1", on_success: :noop, on_failure: :noop}
+      expected = %{ack_id: "1", on_success: :noop, on_failure: {:nack, 0}}
 
       assert {:ok, expected} ==
                Acknowledger.configure(:ack_ref, ack_data, on_success: :noop)

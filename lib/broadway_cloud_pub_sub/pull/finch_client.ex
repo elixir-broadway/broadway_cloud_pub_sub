@@ -1,20 +1,23 @@
-defmodule BroadwayCloudPubSub.PullClient do
+defmodule BroadwayCloudPubSub.Pull.FinchClient do
   @moduledoc """
-  A subscriptions [pull client](https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull) built on `Finch`.
+  The default Pub/Sub pull client, built on `Finch`.
+
+  Implements the `BroadwayCloudPubSub.Pull.Client` behaviour and handles
+  [pull](https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull)
+  requests to the Cloud Pub/Sub REST API.
   """
-  alias Broadway.Message
-  alias BroadwayCloudPubSub.Client
+  alias BroadwayCloudPubSub.Pull.MessageBuilder
   alias Finch.Response
 
   require Logger
 
-  @behaviour Client
+  @behaviour BroadwayCloudPubSub.Pull.Client
 
   @default_retry_codes [408, 500, 502, 503, 504, 522, 524]
   @default_retry_delay_ms 500
   @default_max_retries 10
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def prepare_to_connect(name, producer_opts) do
     case Keyword.fetch(producer_opts, :finch) do
       {:ok, nil} ->
@@ -40,12 +43,12 @@ defmodule BroadwayCloudPubSub.PullClient do
     {specs, producer_opts}
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def init(opts) do
     {:ok, Map.new(opts)}
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def receive_messages(demand, ack_builder, config) do
     max_messages = min(demand, config.max_number_of_messages)
 
@@ -61,14 +64,14 @@ defmodule BroadwayCloudPubSub.PullClient do
           config
           |> execute(:pull, %{"maxMessages" => max_messages})
           |> handle_response(:receive_messages)
-          |> wrap_received_messages(ack_builder)
+          |> wrap_received_messages(ack_builder, config.subscription)
 
         {result, %{name: config.broadway[:name], max_messages: max_messages, demand: demand}}
       end
     )
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def put_deadline(ack_ids, ack_deadline_seconds, config) do
     payload = %{
       "ackIds" => ack_ids,
@@ -80,7 +83,7 @@ defmodule BroadwayCloudPubSub.PullClient do
     |> handle_response(:put_deadline)
   end
 
-  @impl Client
+  @impl BroadwayCloudPubSub.Pull.Client
   def acknowledge(ack_ids, config) do
     :telemetry.span(
       [:broadway_cloud_pub_sub, :pull_client, :ack],
@@ -122,13 +125,13 @@ defmodule BroadwayCloudPubSub.PullClient do
     :ok
   end
 
-  defp wrap_received_messages(pub_sub_messages, ack_builder) do
+  defp wrap_received_messages(pub_sub_messages, ack_builder, subscription) do
     Enum.map(pub_sub_messages, fn pub_sub_msg ->
-      pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder)
+      pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder, subscription)
     end)
   end
 
-  defp pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder) do
+  defp pub_sub_msg_to_broadway_msg(pub_sub_msg, ack_builder, subscription) do
     %{"ackId" => ack_id, "message" => message} = pub_sub_msg
 
     # 2022-09-21 (MC) The docs falsely claim the following:
@@ -137,24 +140,23 @@ defmodule BroadwayCloudPubSub.PullClient do
     # https://cloud.google.com/pubsub/docs/reference/rest/v1/projects.subscriptions/pull#receivedmessage
     delivery_attempt = Map.get(pub_sub_msg, "deliveryAttempt")
 
-    {data, metadata} =
+    {data, fields} =
       message
       |> decode_message()
       |> Map.pop("data")
 
-    metadata = %{
-      attributes: metadata["attributes"],
-      deliveryAttempt: delivery_attempt,
-      messageId: metadata["messageId"],
-      orderingKey: metadata["orderingKey"],
-      publishTime: parse_datetime(metadata["publishTime"])
-    }
-
-    %Message{
-      data: data,
-      metadata: metadata,
-      acknowledger: ack_builder.(ack_id)
-    }
+    MessageBuilder.build_message(
+      data,
+      %{
+        message_id: fields["messageId"],
+        ordering_key: fields["orderingKey"],
+        publish_time: parse_datetime(fields["publishTime"]),
+        subscription: subscription,
+        delivery_attempt: delivery_attempt,
+        attributes: fields["attributes"]
+      },
+      ack_builder.(ack_id)
+    )
   end
 
   defp parse_datetime(nil), do: nil
