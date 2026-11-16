@@ -28,6 +28,10 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
 
   @default_drain_timeout_ms 30_000
 
+  # How long a closing stream waits for the server to end it after a half-close
+  # before it is cancelled.
+  @close_timeout_ms 3_000
+
   # Exactly-once delivery requires a longer retry window to handle server-side transient failures.
   @exactly_once_retry_deadline_ms 600_000
 
@@ -51,6 +55,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     # Registered name (not PID) so we survive UnaryAckSupervisor restarts.
     :ack_batcher,
     draining: false,
+    send_closed: false,
     drain_timer: nil,
     drain_started_at: nil,
     ordering_enabled: false,
@@ -458,7 +463,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
 
     state =
       %{state | drain_timer: nil, drain_started_at: nil, outstanding: %{}}
-      |> close_stream()
+      |> close_stream(:graceful)
 
     {:noreply, state}
   end
@@ -529,7 +534,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
       # 2. Nack pending receipt modacks so the server redelivers them quickly.
       state =
         state
-        |> close_reader()
+        |> half_close_stream()
         |> nack_pending_receipt_modacks()
 
       # 3. Extract ack_ids from buffered messages and nack them.
@@ -576,7 +581,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
   def handle_call(:close, _from, state) do
     # Best-effort flush; AckBatcher may already be down during pipeline shutdown.
     flush_batcher_if_alive(state.ack_batcher)
-    {:reply, :ok, close_stream(state)}
+    {:reply, :ok, close_stream(state, :graceful)}
   end
 
   @impl GenServer
@@ -599,7 +604,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     |> cancel_lease_timer()
     |> cancel_keepalive_timer()
     |> cancel_drain_timer()
-    |> close_stream()
+    |> close_stream(:graceful)
 
     :ok
   end
@@ -693,17 +698,103 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     |> close_stream()
   end
 
-  defp close_stream(%{reader_pid: nil, grpc_stream: nil} = state), do: state
+  defp close_stream(state, mode \\ :abrupt)
 
-  defp close_stream(state) do
+  defp close_stream(%{reader_pid: nil, grpc_stream: nil} = state, _mode), do: state
+
+  defp close_stream(state, mode) do
     state =
       state
-      |> stop_reader()
+      |> finish_stream(mode)
       |> cancel_grpc_stream()
+      |> stop_reader()
       |> disconnect_channel()
       |> cancel_keepalive_timer()
 
-    %{state | reader_pid: nil, grpc_stream: nil, channel: nil, conn_pid: nil}
+    %{state | reader_pid: nil, grpc_stream: nil, channel: nil, conn_pid: nil, send_closed: false}
+  end
+
+  # Half-closes the stream and waits (bounded) for the server to end it, so the
+  # reader finishes by itself. Killing a reader that still owns the stream kills
+  # its response process, and the connection then logs a warning for every frame
+  # the server sends afterwards. If the stream ends in time, `grpc_stream` is
+  # cleared so it is not cancelled; otherwise it falls through to cancel, which
+  # must happen before the reader is stopped for the same reason.
+  defp finish_stream(%{reader_pid: reader, grpc_stream: nil} = state, :graceful)
+       when is_pid(reader) do
+    # The reader is still opening the stream; killing it now would leave a
+    # half-open request behind, so wait for it to hand the stream over.
+    ref = Process.monitor(reader)
+
+    receive do
+      {:stream_opened, ^reader, stream} ->
+        Process.demonitor(ref, [:flush])
+        finish_stream(%{state | grpc_stream: stream}, :graceful)
+
+      {:DOWN, ^ref, :process, ^reader, _reason} ->
+        state
+    after
+      @close_timeout_ms ->
+        Process.demonitor(ref, [:flush])
+        state
+    end
+  end
+
+  defp finish_stream(%{reader_pid: reader, grpc_stream: stream} = state, :graceful)
+       when is_pid(reader) and stream != nil do
+    state = half_close_stream(state)
+
+    if state.send_closed and await_reader(reader, state) == :down do
+      %{state | reader_pid: nil, grpc_stream: nil}
+    else
+      state
+    end
+  end
+
+  defp finish_stream(state, _mode), do: state
+
+  defp half_close_stream(%{send_closed: true} = state), do: state
+
+  defp half_close_stream(%{reader_pid: pid, grpc_stream: stream} = state)
+       when is_pid(pid) and stream != nil do
+    case state.grpc_client.close_send(stream, state.grpc_client_config) do
+      :ok -> %{state | send_closed: true}
+      _error -> state
+    end
+  end
+
+  # No stream to half-close yet (still connecting): `finish_stream/2` deals with
+  # it once the reader hands the stream over.
+  defp half_close_stream(state), do: state
+
+  defp await_reader(reader, state) do
+    Process.unlink(reader)
+    ref = Process.monitor(reader)
+    do_await_reader(reader, ref, state)
+  end
+
+  defp do_await_reader(reader, ref, state) do
+    receive do
+      # Late deliveries are nacked like any message that arrives while closing.
+      {:stream_messages, messages} ->
+        nack_per_on_shutdown(state, Enum.map(messages, & &1.ack_id))
+        do_await_reader(reader, ref, state)
+
+      {:DOWN, ^ref, :process, ^reader, _reason} ->
+        # Discard the reader's own end-of-stream notice so it is not mistaken
+        # for a connection loss after we have closed.
+        receive do
+          {:stream_closed} -> :ok
+        after
+          0 -> :ok
+        end
+
+        :down
+    after
+      @close_timeout_ms ->
+        Process.demonitor(ref, [:flush])
+        :timeout
+    end
   end
 
   defp stop_reader(%{reader_pid: nil} = state), do: state
@@ -868,15 +959,6 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
 
   # --- Private: drain ---
 
-  # Kill the reader so no new messages arrive; keep the channel open for AckBatcher.
-  defp close_reader(%{reader_pid: nil} = state), do: state
-
-  defp close_reader(%{reader_pid: reader_pid} = state) do
-    Process.unlink(reader_pid)
-    Process.exit(reader_pid, :kill)
-    %{state | reader_pid: nil}
-  end
-
   defp start_drain_timer(state) do
     timeout = Map.get(state.config, :drain_timeout_ms, @default_drain_timeout_ms)
     timer = Process.send_after(self(), :drain_timeout, timeout)
@@ -908,7 +990,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     )
 
     state = cancel_drain_timer(state)
-    close_stream(%{state | drain_started_at: nil})
+    close_stream(%{state | drain_started_at: nil}, :graceful)
   end
 
   defp maybe_complete_drain(state), do: state

@@ -93,6 +93,14 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   end
 
   @impl BroadwayCloudPubSub.Streaming.Client
+  def close_send(stream, _config) do
+    GRPC.Stub.end_stream(stream)
+    :ok
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  @impl BroadwayCloudPubSub.Streaming.Client
   def cancel(stream, _config) do
     GRPC.Stub.cancel(stream)
     :ok
@@ -151,7 +159,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
     keepalive_interval_ms = Map.get(config, :keepalive_interval_ms, 30_000)
     interceptors = Map.get(config, :interceptors, [])
 
-    adapter_opts = [http2_opts: %{keepalive: keepalive_interval_ms, settings_timeout: :infinity}]
+    adapter_opts = adapter_opts(adapter, keepalive_interval_ms)
 
     adapter_opts =
       case Map.get(config, :test_pid) do
@@ -179,4 +187,16 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       {:error, reason} -> {:error, {:connect_failed, reason}}
     end
   end
+
+  # The Mint adapter rejects options it does not know, so it gets its own
+  # keepalive options instead of Gun's `:http2_opts`. Unlike Gun, it can also
+  # close a connection that stops answering pings (three missed pings), so a
+  # silently dropped link is replaced within ~3 intervals instead of waiting
+  # for TCP timeouts. `:keepalive_tolerance` must be positive: 0 closes at once.
+  @doc false
+  def adapter_opts(GRPC.Client.Adapters.Mint, keepalive_interval_ms),
+    do: [keepalive: keepalive_interval_ms, keepalive_tolerance: 3]
+
+  def adapter_opts(_adapter, keepalive_interval_ms),
+    do: [http2_opts: %{keepalive: keepalive_interval_ms, settings_timeout: :infinity}]
 end

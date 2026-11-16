@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Require `grpc ~> 1.1`.
+- Fix the `:mint` adapter failing to connect: it rejects unknown adapter options as of `grpc` 1.1, so it now gets its native `:keepalive` option. `:keepalive_interval_ms` applies to `:mint` too, which also closes and replaces a connection after three unanswered pings.
+
 ## [2.0.0]
 
 2.0 introduces a new default producer based on the gRPC StreamingPull API.

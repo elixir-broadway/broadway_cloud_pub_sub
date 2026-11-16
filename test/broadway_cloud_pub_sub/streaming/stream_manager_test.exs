@@ -1362,6 +1362,52 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       # and the test doesn't hang.
       Process.sleep(100)
     end
+
+    test "close/1 half-closes the stream, waits for the server to end it, and does not cancel" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      Process.sleep(50)
+
+      closer = Task.async(fn -> StreamManager.close(pid) end)
+
+      assert_receive {:adapter_call, :end_stream}, 2_000
+      # close/1 is still waiting for the server to end its side.
+      assert Task.yield(closer, 100) == nil
+      refute_received {:adapter_call, :cancel}
+
+      GrpcDynamicAdapter.push_end_stream(ctrl)
+
+      assert Task.await(closer) == :ok
+      refute_received {:adapter_call, :cancel}
+    end
+
+    test "prepare_for_draining/1 half-closes the stream instead of killing the reader" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      Process.sleep(50)
+
+      drainer = Task.async(fn -> StreamManager.prepare_for_draining(pid) end)
+
+      assert_receive {:adapter_call, :end_stream}, 2_000
+      GrpcDynamicAdapter.push_end_stream(ctrl)
+
+      assert {:ok, 0} = Task.await(drainer)
+      refute_received {:adapter_call, :cancel}
+    end
   end
 
   # ============================================================
