@@ -538,6 +538,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       state = :sys.get_state(pid)
       # reconnect_ref should be cleared but no new connection started
+      assert state.reconnect_ref == nil
       assert state.reader_pid == nil
     end
 
@@ -557,6 +558,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       state = :sys.get_state(pid)
       # No new reconnect scheduled during drain
+      assert state.reconnect_ref == nil
       assert state.reader_pid == nil
       assert Process.alive?(pid)
     end
@@ -1422,9 +1424,47 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert_receive {:adapter_call, {:send_data, _}}, 2_000
       Process.sleep(50)
 
+      # Keep the drain open so the stream state can be inspected.
+      :sys.replace_state(pid, fn s -> %{s | outstanding: %{"in-flight" => %{}}} end)
+
       assert {:ok, 0} = StreamManager.prepare_for_draining(pid)
       refute_received {:adapter_call, :end_stream}
-      assert Process.alive?(pid)
+
+      # Without a half-close the stream is cancelled and its reader stopped,
+      # but the channel stays open for the ack batcher.
+      assert_receive {:adapter_call, :cancel}, 500
+      state = :sys.get_state(pid)
+      assert state.reader_pid == nil
+      assert state.grpc_stream == nil
+      assert state.channel != nil
+
+      send(pid, :drain_timeout)
+      assert_receive {:adapter_call, :disconnect}, 500
+    end
+
+    test "a stream that opens after the drain started is half-closed" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      Process.sleep(50)
+
+      # Replay the hand-over as if it arrived after the drain started.
+      %{reader_pid: reader, grpc_stream: stream} = :sys.get_state(pid)
+
+      :sys.replace_state(pid, fn s ->
+        %{s | draining: true, grpc_stream: nil, outstanding: %{"in-flight" => %{}}}
+      end)
+
+      send(pid, {:stream_opened, reader, stream})
+
+      assert_receive {:adapter_call, :end_stream}, 2_000
+      assert :sys.get_state(pid).keepalive_timer == nil
     end
 
     test "prepare_for_draining/1 half-closes the stream without waiting for the server" do
@@ -2429,6 +2469,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert state.draining == true
       # No reconnect scheduled during drain
+      assert state.reconnect_ref == nil
 
       # Ack completes — drain should finish
       StreamManager.acknowledge(pid, ["drain-err-1"])
@@ -2461,6 +2502,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert Process.alive?(pid)
       state = :sys.get_state(pid)
       assert state.draining == true
+      assert state.reconnect_ref == nil
 
       # Ack the in-flight message — drain completes
       StreamManager.acknowledge(pid, ["drain-close-1"])

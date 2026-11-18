@@ -193,18 +193,18 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
 
   # The StreamReader successfully opened the gRPC stream and sends us the
   # stream struct so we can call send_request for acks and lease extensions.
-  def handle_info({:stream_opened, reader_pid, grpc_stream}, %{reader_pid: reader_pid} = state) do
-    state =
-      %{
-        state
-        | grpc_stream: grpc_stream,
-          conn_pid: grpc_stream.channel.adapter_payload.conn_pid,
-          backoff: Backoff.reset(state.backoff)
-      }
-      |> schedule_lease_timer()
-      |> schedule_keepalive_timer()
+  def handle_info(
+        {:stream_opened, reader_pid, grpc_stream},
+        %{reader_pid: reader_pid, draining: true} = state
+      ) do
+    # The drain started while the stream was opening: stop the server from
+    # sending messages instead of starting the keep-alive cycle.
+    state = state |> attach_stream(grpc_stream) |> end_send_side()
+    {:noreply, state}
+  end
 
-    emit_telemetry(:connect, %{}, state.config)
+  def handle_info({:stream_opened, reader_pid, grpc_stream}, %{reader_pid: reader_pid} = state) do
+    state = state |> attach_stream(grpc_stream) |> schedule_keepalive_timer()
     {:noreply, state}
   end
 
@@ -531,11 +531,11 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
       )
 
     try do
-      # 1. Close the reader FIRST to stop new messages from arriving.
+      # 1. Half-close the stream FIRST to stop new messages from arriving.
       # 2. Nack pending receipt modacks so the server redelivers them quickly.
       state =
         state
-        |> half_close_stream()
+        |> end_send_side()
         |> nack_pending_receipt_modacks()
 
       # 3. Extract ack_ids from buffered messages and nack them.
@@ -673,6 +673,20 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
       {:error, {:connect_failed, Exception.message(e)}, state}
   end
 
+  defp attach_stream(state, grpc_stream) do
+    state =
+      %{
+        state
+        | grpc_stream: grpc_stream,
+          conn_pid: grpc_stream.channel.adapter_payload.conn_pid,
+          backoff: Backoff.reset(state.backoff)
+      }
+      |> schedule_lease_timer()
+
+    emit_telemetry(:connect, %{}, state.config)
+    state
+  end
+
   defp send_on_stream(grpc_stream, request, state) do
     state.grpc_client.send_request(grpc_stream, request, state.grpc_client_config)
   end
@@ -699,7 +713,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     |> close_stream()
   end
 
-  defp close_stream(%{reader_pid: nil, grpc_stream: nil} = state), do: state
+  defp close_stream(%{reader_pid: nil, grpc_stream: nil, channel: nil} = state), do: state
 
   # The stream is cancelled while the reader (which owns its response process)
   # is still alive, and only then is the reader killed. Killing the reader
@@ -713,6 +727,26 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
       |> cancel_keepalive_timer()
 
     %{state | reader_pid: nil, grpc_stream: nil, channel: nil, conn_pid: nil, send_closed: false}
+  end
+
+  # Stops the server from sending more messages while keeping the channel open.
+  # If the half-close cannot be sent (client without `close_send/2`, or an
+  # error), the stream is cancelled and its reader stopped instead. A stream
+  # that is still opening is handled when it is handed over.
+  defp end_send_side(%{grpc_stream: nil} = state), do: state
+
+  defp end_send_side(state) do
+    state = half_close_stream(state)
+
+    if state.send_closed do
+      state
+    else
+      state
+      |> cancel_grpc_stream()
+      |> stop_reader()
+      |> cancel_keepalive_timer()
+      |> Map.merge(%{reader_pid: nil, grpc_stream: nil})
+    end
   end
 
   defp half_close_stream(%{send_closed: true} = state), do: state
