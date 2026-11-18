@@ -114,11 +114,14 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   @doc """
   Half-closes an open gRPC stream (HTTP/2 END_STREAM, gRPC "CloseSend").
 
-  Called at shutdown, once nothing more will be sent, so the server ends the
-  stream and the receiving side finishes on its own. Returns `:ok` if the
-  half-close was sent, or `{:error, reason}` if the stream could not be written.
+  Called when draining starts, once nothing more will be sent, so the server
+  stops delivering messages. Returns `:ok` if the half-close was sent, or
+  `{:error, reason}` if the stream could not be written. Optional: clients that
+  do not implement it simply skip the half-close.
   """
   @callback close_send(stream(), config()) :: :ok | {:error, term()}
+
+  @optional_callbacks close_send: 2
 
   @doc """
   Cancels an open gRPC stream.

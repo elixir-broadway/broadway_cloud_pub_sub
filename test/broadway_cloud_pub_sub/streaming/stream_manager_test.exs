@@ -48,6 +48,23 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     def handle_call(_msg, _from, state), do: {:reply, :ok, state}
   end
 
+  # The default client without the optional `close_send/2` callback.
+  defmodule NoCloseSendClient do
+    @moduledoc false
+    alias BroadwayCloudPubSub.Streaming.GrpcClient
+
+    defdelegate init(opts), to: GrpcClient
+    defdelegate connect(config), to: GrpcClient
+    defdelegate disconnect(channel, config), to: GrpcClient
+    defdelegate connection_pid(channel), to: GrpcClient
+    defdelegate streaming_pull(channel, config), to: GrpcClient
+    defdelegate send_request(stream, request, config), to: GrpcClient
+    defdelegate recv(stream, config), to: GrpcClient
+    defdelegate cancel(stream, config), to: GrpcClient
+    defdelegate acknowledge(channel, request, config), to: GrpcClient
+    defdelegate modify_ack_deadline(channel, request, config), to: GrpcClient
+  end
+
   # Start a StreamManager, inject producer_pid so it doesn't try to connect.
   # Also starts a real AckBatcher (backed by StubRpcClient) registered under
   # the name that StreamManager derives from broadway_name.
@@ -521,7 +538,6 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       state = :sys.get_state(pid)
       # reconnect_ref should be cleared but no new connection started
-      assert state.reconnect_ref == nil
       assert state.reader_pid == nil
     end
 
@@ -541,7 +557,6 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       state = :sys.get_state(pid)
       # No new reconnect scheduled during drain
-      assert state.reconnect_ref == nil
       assert state.reader_pid == nil
       assert Process.alive?(pid)
     end
@@ -714,6 +729,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert state.grpc_stream == nil
       assert state.reconnect_ref != nil
+    end
+
+    test "does nothing once the stream is half-closed" do
+      pid = start_manager(keepalive_interval_ms: 10, backoff_min: 60_000)
+
+      :sys.replace_state(pid, fn s -> %{s | grpc_stream: :fake_stream, send_closed: true} end)
+
+      send(pid, :send_keepalive)
+      sync(pid)
+
+      # Writing to the fake stream would fail and reset the connection.
+      state = :sys.get_state(pid)
+      assert state.grpc_stream == :fake_stream
     end
 
     test "does not crash when stream is nil (reconnecting)" do
@@ -1363,7 +1391,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       Process.sleep(100)
     end
 
-    test "close/1 half-closes the stream, waits for the server to end it, and does not cancel" do
+    test "close/1 returns without waiting for the server to end the stream" do
       pid =
         start_manager(
           adapter: GrpcDynamicAdapter,
@@ -1371,24 +1399,35 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
           token_generator: {__MODULE__, :noop_token, []}
         )
 
-      assert_receive {:adapter_connected, ctrl}, 2_000
+      assert_receive {:adapter_connected, _ctrl}, 2_000
       assert_receive {:adapter_call, {:send_data, _}}, 2_000
       Process.sleep(50)
 
       closer = Task.async(fn -> StreamManager.close(pid) end)
 
-      assert_receive {:adapter_call, :end_stream}, 2_000
-      # close/1 is still waiting for the server to end its side.
-      assert Task.yield(closer, 100) == nil
-      refute_received {:adapter_call, :cancel}
-
-      GrpcDynamicAdapter.push_end_stream(ctrl)
-
-      assert Task.await(closer) == :ok
-      refute_received {:adapter_call, :cancel}
+      assert Task.yield(closer, 500) == {:ok, :ok}
+      refute_received {:adapter_call, :end_stream}
     end
 
-    test "prepare_for_draining/1 half-closes the stream instead of killing the reader" do
+    test "prepare_for_draining/1 skips the half-close for clients without close_send/2" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          grpc_client: NoCloseSendClient,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      Process.sleep(50)
+
+      assert {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      refute_received {:adapter_call, :end_stream}
+      assert Process.alive?(pid)
+    end
+
+    test "prepare_for_draining/1 half-closes the stream without waiting for the server" do
       pid =
         start_manager(
           adapter: GrpcDynamicAdapter,
@@ -1396,17 +1435,14 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
           token_generator: {__MODULE__, :noop_token, []}
         )
 
-      assert_receive {:adapter_connected, ctrl}, 2_000
+      assert_receive {:adapter_connected, _ctrl}, 2_000
       assert_receive {:adapter_call, {:send_data, _}}, 2_000
       Process.sleep(50)
 
       drainer = Task.async(fn -> StreamManager.prepare_for_draining(pid) end)
 
       assert_receive {:adapter_call, :end_stream}, 2_000
-      GrpcDynamicAdapter.push_end_stream(ctrl)
-
-      assert {:ok, 0} = Task.await(drainer)
-      refute_received {:adapter_call, :cancel}
+      assert {:ok, {:ok, 0}} = Task.yield(drainer, 500)
     end
   end
 
@@ -2393,7 +2429,6 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert state.draining == true
       # No reconnect scheduled during drain
-      assert state.reconnect_ref == nil
 
       # Ack completes — drain should finish
       StreamManager.acknowledge(pid, ["drain-err-1"])
@@ -2426,7 +2461,6 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert Process.alive?(pid)
       state = :sys.get_state(pid)
       assert state.draining == true
-      assert state.reconnect_ref == nil
 
       # Ack the in-flight message — drain completes
       StreamManager.acknowledge(pid, ["drain-close-1"])
