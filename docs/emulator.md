@@ -51,13 +51,14 @@ include the `http://` scheme:
 ## Switching on `PUBSUB_EMULATOR_HOST`
 
 To follow the convention of Google's client libraries, choose the options where
-the pipeline is started:
+the pipeline is started. Like those libraries, treat an empty value the same as
+an unset one:
 
 ```elixir
 defmodule MyApp.PubSub do
   def producer_options(subscription) do
     case System.get_env("PUBSUB_EMULATOR_HOST") do
-      nil ->
+      host when host in [nil, ""] ->
         [subscription: subscription, goth: MyApp.Goth]
 
       host ->
