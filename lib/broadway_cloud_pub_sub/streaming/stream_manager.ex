@@ -101,6 +101,8 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
   producer's `prepare_for_draining/1`. Atomically:
 
     1. Half-closes the gRPC stream so the server stops sending new messages.
+       Clients without the optional `close_send/2` callback, or a failed
+       half-close, fall back to cancelling the stream and closing its connection.
     2. Nacks pending receipt modacks (exactly-once) so the server redelivers.
     3. Nacks and clears all buffered messages per the `on_shutdown` config.
     4. Removes those buffered ack_ids from `outstanding` so the drain
@@ -729,9 +731,9 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     %{state | reader_pid: nil, grpc_stream: nil, channel: nil, conn_pid: nil, send_closed: false}
   end
 
-  # Stops the server from sending more messages while keeping the channel open.
-  # If the half-close cannot be sent (client without `close_send/2`, or an
-  # error), the stream is cancelled and its reader stopped instead. A stream
+  # Stops the server from sending more messages while letting it finish the
+  # stream. If the half-close cannot be sent (client without `close_send/2`, or
+  # an error), the stream is closed instead; acks use the separate unary channel. A stream
   # that is still opening is handled when it is handed over.
   defp end_send_side(%{grpc_stream: nil} = state), do: state
 
@@ -741,11 +743,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     if state.send_closed do
       state
     else
-      state
-      |> cancel_grpc_stream()
-      |> stop_reader()
-      |> cancel_keepalive_timer()
-      |> Map.merge(%{reader_pid: nil, grpc_stream: nil})
+      close_stream(state)
     end
   end
 

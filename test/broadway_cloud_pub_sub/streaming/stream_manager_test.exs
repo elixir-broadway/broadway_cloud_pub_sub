@@ -1430,16 +1430,13 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert {:ok, 0} = StreamManager.prepare_for_draining(pid)
       refute_received {:adapter_call, :end_stream}
 
-      # Without a half-close the stream is cancelled and its reader stopped,
-      # but the channel stays open for the ack batcher.
+      # Without a half-close the stream is closed; acks use the unary channel.
       assert_receive {:adapter_call, :cancel}, 500
+      assert_receive {:adapter_call, :disconnect}, 500
       state = :sys.get_state(pid)
       assert state.reader_pid == nil
       assert state.grpc_stream == nil
-      assert state.channel != nil
-
-      send(pid, :drain_timeout)
-      assert_receive {:adapter_call, :disconnect}, 500
+      assert state.channel == nil
     end
 
     test "a stream that opens after the drain started is half-closed" do
