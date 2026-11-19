@@ -168,6 +168,11 @@ defmodule BroadwayCloudPubSub.Producer do
        use_ssl: false,
        token_generator: {MyApp, :emulator_token, []}}
 
+  where `MyApp.emulator_token/0` returns `{:ok, "emulator"}`; the emulator does
+  not check the token, so Goth is not needed. See the
+  [Pub/Sub emulator guide](emulator.md) for the pull producer, switching on
+  `PUBSUB_EMULATOR_HOST`, and setting up topics and subscriptions.
+
   ## Differences from `BroadwayCloudPubSub.Pull.Producer`
 
     * **Push-based**: Messages arrive via a persistent gRPC stream rather than
