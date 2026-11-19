@@ -26,6 +26,11 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
     Measurements: as described in `:telemetry.span/3`.
     Metadata: `%{name: broadway_name, subscription: subscription, count: ack_count}`
 
+  The `:stop` metadata also includes `:result`, which is `:ok` when the RPC
+  succeeded and `:error` when it failed. On failure it includes `:error` as well,
+  with the error the RPC returned (usually a `GRPC.RPCError`). A failed RPC still
+  ends the span with `:stop`: `:exception` is only emitted when the call raises.
+
   Custom `BroadwayCloudPubSub.Streaming.Client` implementations that wish to emit
   the same events should use the same event name prefix and metadata shape.
   """
@@ -112,7 +117,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       fn ->
         result = Stub.acknowledge(channel, request, timeout: @unary_rpc_timeout_ms)
 
-        {result, %{}}
+        {result, stop_metadata(metadata, result)}
       end,
       Map.get(config, :telemetry_metadata)
     )
@@ -134,11 +139,18 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       fn ->
         result = Stub.modify_ack_deadline(channel, request, timeout: @unary_rpc_timeout_ms)
 
-        {result, %{}}
+        {result, stop_metadata(metadata, result)}
       end,
       Map.get(config, :telemetry_metadata)
     )
   end
+
+  # A failed RPC is returned, not raised, so the span ends with `:stop`.
+  # Record the outcome so handlers can tell a failure from a success.
+  defp stop_metadata(metadata, {:error, error}),
+    do: Map.merge(metadata, %{result: :error, error: error})
+
+  defp stop_metadata(metadata, _result), do: Map.put(metadata, :result, :ok)
 
   defp fetch_token(%{token_generator: {mod, fun, args}}) do
     apply(mod, fun, args)
