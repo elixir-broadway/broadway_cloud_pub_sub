@@ -677,6 +677,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
     # INVALID_ARGUMENT and an ErrorInfo detail listing them. The status is
     # terminal, but stopping on it made the client crash-loop on every resend
     # of the batch until the ack retry deadline.
+    @tag capture_log: true
     test "terminal status with per-ack-id ErrorInfo counts permanent ids and keeps running" do
       test_pid = self()
       telemetry_name = "unary-eod-permanent-#{System.unique_integer([:positive])}"
@@ -716,9 +717,18 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
 
       ack_ids = ["ack-expired", "ack-transient", "ack-unlisted"]
 
-      # As for any failed chunk, the ids are handed back to AckBatcher.
-      assert {:ok, retained} = UnaryRpcClient.acknowledge(pid, ack_ids)
-      assert Enum.sort(retained) == Enum.sort(ack_ids)
+      # Which ids come back for retry is not asserted here: today the whole
+      # failed chunk is handed back to AckBatcher, including "ack-expired",
+      # which is a known limitation rather than intended behavior.
+      log =
+        capture_log(fn ->
+          assert {:ok, retained} = UnaryRpcClient.acknowledge(pid, ack_ids)
+          assert "ack-transient" in retained
+          assert "ack-unlisted" in retained
+        end)
+
+      assert log =~
+               "Cloud Pub/Sub rejected some ack ids while trying to acknowledge messages via gRPC"
 
       assert_receive {:permanent_failure, %{count: 1}, %{subscription: _}}, 1_000
       refute_received {:DOWN, ^ref, :process, ^pid, _reason}
@@ -731,6 +741,40 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
         status: GRPC.Status.invalid_argument(),
         message: "bad request",
         details: []
+      }
+
+      pid = start_client_with_failing_rpc(error)
+      assert_receive {:fake_grpc, :connect, _conn_pid}
+      ref = Process.monitor(pid)
+      Process.flag(:trap_exit, true)
+
+      capture_log(fn ->
+        assert {:ok, ["ack-1"]} = UnaryRpcClient.acknowledge(pid, ["ack-1"])
+        assert_receive {:DOWN, ^ref, :process, ^pid, {:terminal_error, ^error}}
+      end)
+
+      Process.flag(:trap_exit, false)
+    end
+
+    # A general ErrorInfo (not EXACTLY_ONCE_ACKID_FAILURE) is not a per-ack-id
+    # answer, so a terminal status carrying one must still stop the client.
+    @tag capture_log: true
+    test "terminal status with a general ErrorInfo still stops the GenServer" do
+      error_info = %Google.Rpc.ErrorInfo{
+        reason: "IAM_PERMISSION_DENIED",
+        domain: "pubsub.googleapis.com",
+        metadata: %{"permission" => "pubsub.subscriptions.consume"}
+      }
+
+      error = %GRPC.RPCError{
+        status: GRPC.Status.permission_denied(),
+        message: "permission denied",
+        details: [
+          %Google.Protobuf.Any{
+            type_url: "type.googleapis.com/google.rpc.ErrorInfo",
+            value: Google.Rpc.ErrorInfo.encode(error_info)
+          }
+        ]
       }
 
       pid = start_client_with_failing_rpc(error)

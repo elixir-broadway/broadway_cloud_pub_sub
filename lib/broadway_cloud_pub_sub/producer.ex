@@ -367,8 +367,10 @@ defmodule BroadwayCloudPubSub.Producer do
       Metadata includes: `reason: term()` - the connection error.
 
     * `[:broadway_cloud_pub_sub, :streaming, :unary, :permanent_failure]` -
-      one or more ack_ids were permanently rejected by the server (e.g. ack_id
-      expired). These are dropped and not retried.
+      one or more ack_ids in an Acknowledge or ModifyAckDeadline request were
+      permanently rejected by the server (e.g. ack_id expired). The count is
+      per rejected request, not per unique ack_id: the ids may be sent again
+      until the ack retry deadline, and each rejection is counted.
 
       Measurements: `%{count: pos_integer()}`
 

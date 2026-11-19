@@ -307,13 +307,19 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
 
       # For exactly-once subscriptions, Pub/Sub rejects expired or otherwise
       # invalid ack ids with INVALID_ARGUMENT and lists them per ack id in an
-      # ErrorInfo detail (reason "EXACTLY_ONCE_ACKID_FAILURE"). The status
-      # code is terminal, but the call reached the server and was answered per
-      # ack id, so handle it like a retryable error with per-ack-id details
-      # instead of stopping. Stopping made AckBatcher resend the same batch to
-      # a fresh process, which got the same answer and stopped again, every
-      # flush until the ack retry deadline.
-      :terminal when map_size(per_ack_errors) > 0 ->
+      # ErrorInfo detail. The status code is terminal, but the call reached
+      # the server and was answered per ack id, so handle it like a retryable
+      # error with per-ack-id details instead of stopping. Stopping made
+      # AckBatcher resend the same batch to a fresh process, which got the
+      # same answer and stopped again, every flush until the ack retry
+      # deadline. AckResult decides which details are per-ack-id answers, so
+      # other terminal errors (e.g. PERMISSION_DENIED with a general ErrorInfo)
+      # still stop the client below.
+      :terminal when per_ack_errors != %{} ->
+        Logger.warning(
+          "Cloud Pub/Sub rejected some ack ids while trying to #{operation} via gRPC - reason: #{inspect(error)}"
+        )
+
         transient_ids = drop_permanent_failures(state, ack_ids, per_ack_errors)
         {:reply, {:error, {error, transient_ids}}, state}
 
@@ -374,8 +380,10 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   defp error_details(%{details: details}), do: details
   defp error_details(_), do: nil
 
-  # Drops the ack ids Pub/Sub rejected for good (counted on :permanent_failure)
-  # and returns the rest for AckBatcher to retry.
+  # Counts the ack ids Pub/Sub rejected for good on :permanent_failure and
+  # returns the rest for retry. The count is per rejected attempt: while
+  # chunked_rpc/3 hands the whole failed chunk back to AckBatcher, the same
+  # permanent ids are resent and counted again until the ack retry deadline.
   defp drop_permanent_failures(state, ack_ids, per_ack_errors) do
     {transient_ids, permanent_ids} = split_by_ack_result(ack_ids, per_ack_errors)
 
