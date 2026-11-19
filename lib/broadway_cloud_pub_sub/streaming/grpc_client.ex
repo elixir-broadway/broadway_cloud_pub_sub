@@ -147,10 +147,16 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
 
   # A failed RPC is returned, not raised, so the span ends with `:stop`.
   # Record the outcome so handlers can tell a failure from a success.
+  # Only an `{:ok, ...}` reply counts as success; any other return is reported
+  # as an error so an unexpected shape is never counted as a successful RPC.
+  defp stop_metadata(metadata, {:ok, _reply}), do: Map.put(metadata, :result, :ok)
+  defp stop_metadata(metadata, {:ok, _reply, _headers}), do: Map.put(metadata, :result, :ok)
+
   defp stop_metadata(metadata, {:error, error}),
     do: Map.merge(metadata, %{result: :error, error: error})
 
-  defp stop_metadata(metadata, _result), do: Map.put(metadata, :result, :ok)
+  defp stop_metadata(metadata, other),
+    do: Map.merge(metadata, %{result: :error, error: other})
 
   defp fetch_token(%{token_generator: {mod, fun, args}}) do
     apply(mod, fun, args)

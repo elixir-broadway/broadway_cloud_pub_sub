@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack | :modack, :stop]`
   telemetry events now report the RPC outcome as `:result` (`:ok` or `:error`)
-  and, on failure, the returned `:error`. They also carry the documented `:name`,
-  `:subscription` and `:count` metadata, which was previously only on `:start`.
+  and, on failure, the returned `:error`.
+
+### Fixed
+
+- The `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack | :modack, :stop]`
+  telemetry events now carry the documented `:name`, `:subscription` and `:count`
+  metadata, which was previously only on `:start`.
 
 ## [2.0.0]
 
