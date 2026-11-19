@@ -294,19 +294,27 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   end
 
   defp handle_rpc_error(state, ack_ids, error, operation) do
+    per_ack_errors = AckResult.parse_error_details(error_details(error))
+
     case ErrorClassifier.classify(error) do
       :retryable ->
         # For exactly-once subscriptions, retryable RPC errors may embed
         # per-ack-ID permanent failures in error details. Permanent ids
         # are dropped; transient ones are returned to AckBatcher for retry.
-        per_ack_errors = AckResult.parse_error_details(error_details(error))
-        {transient_ids, permanent_ids} = split_by_ack_result(ack_ids, per_ack_errors)
-
-        if permanent_ids != [] do
-          emit_telemetry(:permanent_failure, %{count: length(permanent_ids)}, state.config)
-        end
-
+        transient_ids = drop_permanent_failures(state, ack_ids, per_ack_errors)
         state = schedule_reconnect(state)
+        {:reply, {:error, {error, transient_ids}}, state}
+
+      # For exactly-once subscriptions, Pub/Sub rejects expired or otherwise
+      # invalid ack ids with INVALID_ARGUMENT and lists them per ack id in an
+      # ErrorInfo detail (reason "EXACTLY_ONCE_ACKID_FAILURE"). The status
+      # code is terminal, but the call reached the server and was answered per
+      # ack id, so handle it like a retryable error with per-ack-id details
+      # instead of stopping. Stopping made AckBatcher resend the same batch to
+      # a fresh process, which got the same answer and stopped again, every
+      # flush until the ack retry deadline.
+      :terminal when map_size(per_ack_errors) > 0 ->
+        transient_ids = drop_permanent_failures(state, ack_ids, per_ack_errors)
         {:reply, {:error, {error, transient_ids}}, state}
 
       :terminal ->
@@ -365,6 +373,18 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   # the entire batch.
   defp error_details(%{details: details}), do: details
   defp error_details(_), do: nil
+
+  # Drops the ack ids Pub/Sub rejected for good (counted on :permanent_failure)
+  # and returns the rest for AckBatcher to retry.
+  defp drop_permanent_failures(state, ack_ids, per_ack_errors) do
+    {transient_ids, permanent_ids} = split_by_ack_result(ack_ids, per_ack_errors)
+
+    if permanent_ids != [] do
+      emit_telemetry(:permanent_failure, %{count: length(permanent_ids)}, state.config)
+    end
+
+    transient_ids
+  end
 
   # Splits ack_ids into {transient, permanent} based on per-ack-ID error details
   # parsed from the gRPC error. If there are no per-ack-ID details (the common
