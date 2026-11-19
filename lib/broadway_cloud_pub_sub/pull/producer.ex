@@ -43,9 +43,10 @@ defmodule BroadwayCloudPubSub.Pull.Producer do
   You can use the `:on_success` and `:on_failure` options to control how
   messages are acknowledged with the Pub/Sub system.
 
-  By default successful messages are acknowledged and failed messages are ignored
-  (`:noop`). You can set `:on_success` and `:on_failure` when starting this producer,
-  or change them for each message through `Broadway.Message.configure_ack/2`.
+  By default successful messages are acknowledged and failed messages are nacked
+  with `{:nack, 0}`, which makes them immediately available for redelivery. You can
+  set `:on_success` and `:on_failure` when starting this producer, or change them for
+  each message through `Broadway.Message.configure_ack/2`.
 
   The following values are supported by both `:on_success` and `:on_failure`:
 
