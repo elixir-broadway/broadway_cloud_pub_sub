@@ -262,6 +262,13 @@ Google Cloud Pub/Sub client libraries.
  on_failure: :noop}
 ```
 
+With the streaming producer, `:noop` does not behave like 1.x: the message stays
+under lease management and its lease keeps being extended until
+`:max_extension_ms` (default 60 minutes) has passed, so it is not redelivered
+after `ackDeadlineSeconds`. See the Acknowledgements section of
+`BroadwayCloudPubSub.Producer`. To delay redelivery, use `{:nack, seconds}`
+instead.
+
 For most applications the new default is the right behaviour. A failed message
 is retried immediately rather than holding up the subscription until its deadline
 expires.

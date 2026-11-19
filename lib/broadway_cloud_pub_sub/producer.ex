@@ -68,8 +68,14 @@ defmodule BroadwayCloudPubSub.Producer do
   Supported values:
 
     * `:ack` - acknowledge the message; Pub/Sub removes it from the subscription.
-    * `:noop` - do nothing; the message is redelivered after the subscription's
-      `ackDeadlineSeconds` expires.
+    * `:noop` - do nothing. The message stays under lease management, so its
+      lease keeps being extended until `:max_extension_ms` (default 60 minutes)
+      has passed since it was received; after that the lease is no longer
+      extended and the message is redelivered once its current ack deadline
+      expires. Until then it counts towards `:max_outstanding_messages` and
+      `:max_outstanding_bytes`, and a graceful shutdown waits the full
+      `:drain_timeout_ms` for it. Use `{:nack, seconds}` to delay redelivery
+      instead.
     * `:nack` - equivalent to `{:nack, 0}`; makes the message immediately
       available for redelivery.
     * `{:nack, seconds}` - sets `ackDeadlineSeconds` to `seconds` for the
