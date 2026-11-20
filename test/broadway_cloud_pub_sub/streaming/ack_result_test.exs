@@ -82,7 +82,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
   describe "parse_error_details/1 — transient per-ack-id errors" do
     test "returns :transient for ack_ids with TRANSIENT_ reason" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "TRANSIENT_FAILURE_INVALID_ACK_ID",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{
           "ack-1" => "TRANSIENT_FAILURE_INVALID_ACK_ID",
@@ -101,7 +101,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
 
     test "returns :transient for all TRANSIENT_ variants" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "TRANSIENT_SOMETHING",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-x" => "TRANSIENT_SOMETHING"}
       }
@@ -116,7 +116,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
   describe "parse_error_details/1 — permanent per-ack-id errors" do
     test "returns {:permanent, reason} for ack_ids with PERMANENT_ reason" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "PERMANENT_FAILURE_INVALID_ACK_ID",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-3" => "PERMANENT_FAILURE_INVALID_ACK_ID"}
       }
@@ -129,7 +129,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
 
     test "returns {:permanent, reason} for unrecognised (non-TRANSIENT_) reason" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "SOMETHING_COMPLETELY_DIFFERENT",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-4" => "SOMETHING_COMPLETELY_DIFFERENT"}
       }
@@ -144,7 +144,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
   describe "parse_error_details/1 — mixed transient and permanent" do
     test "correctly classifies each ack_id independently" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "MIXED",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{
           "ack-transient" => "TRANSIENT_FAILURE_INVALID_ACK_ID",
@@ -163,13 +163,13 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
   describe "parse_error_details/1 — multiple Any details" do
     test "merges results from multiple ErrorInfo entries" do
       error_info_1 = %Google.Rpc.ErrorInfo{
-        reason: "TRANSIENT_FAILURE_INVALID_ACK_ID",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-a" => "TRANSIENT_FAILURE_INVALID_ACK_ID"}
       }
 
       error_info_2 = %Google.Rpc.ErrorInfo{
-        reason: "PERMANENT_FAILURE_INVALID_ACK_ID",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-b" => "PERMANENT_FAILURE_INVALID_ACK_ID"}
       }
@@ -187,7 +187,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
 
     test "skips non-ErrorInfo entries between valid ones" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "TRANSIENT_FAILURE",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{"ack-z" => "TRANSIENT_FAILURE"}
       }
@@ -202,10 +202,22 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
     end
   end
 
+  describe "parse_error_details/1: ErrorInfo with another reason" do
+    test "ignores an ErrorInfo that is not an EXACTLY_ONCE_ACKID_FAILURE" do
+      error_info = %Google.Rpc.ErrorInfo{
+        reason: "IAM_PERMISSION_DENIED",
+        domain: "pubsub.googleapis.com",
+        metadata: %{"permission" => "pubsub.subscriptions.consume"}
+      }
+
+      assert AckResult.parse_error_details([build_error_info_any(error_info)]) == %{}
+    end
+  end
+
   describe "parse_error_details/1 — empty metadata" do
     test "returns empty map when ErrorInfo metadata is empty" do
       error_info = %Google.Rpc.ErrorInfo{
-        reason: "SOME_ERROR",
+        reason: "EXACTLY_ONCE_ACKID_FAILURE",
         domain: "pubsub.googleapis.com",
         metadata: %{}
       }
