@@ -136,10 +136,13 @@ defmodule BroadwayCloudPubSub.Producer do
 
     1. Nacks all buffered messages (received but not yet dispatched to
        processors) per the `:on_shutdown` option (default `{:nack, 5}`).
-    2. Stops the gRPC stream to prevent new messages from arriving.
+    2. Half-closes the gRPC stream so the server stops sending new messages.
+       If the gRPC client does not implement the optional `close_send/2`
+       callback, or the half-close fails, the stream is cancelled and its
+       connection closed instead.
     3. Waits up to `:drain_timeout_ms` (default 30s) for in-flight messages
        (dispatched to processors but not yet acked/nacked) to be processed.
-    4. Force-closes the stream after the drain timeout.
+    4. Cancels the stream after the drain timeout.
 
   The drain lifecycle is tracked via the `drain` telemetry span
   (see [Telemetry](#module-telemetry)).
@@ -180,8 +183,9 @@ defmodule BroadwayCloudPubSub.Producer do
     * **Flow control**: Controlled at the gRPC stream level via
       `:max_outstanding_messages` and `:max_outstanding_bytes` rather than
       per-request polling. See [Flow control](#module-flow-control).
-    * **Graceful shutdown**: The stream is closed immediately on shutdown to
-      stop new messages arriving; the unary channel stays up so in-flight
+    * **Graceful shutdown**: The stream is half-closed on shutdown so the
+      server stops sending new messages (or cancelled, if the client has no
+      `close_send/2` or the half-close fails); the unary channel stays up so in-flight
       messages can still be acked or nacked during the drain window. The pull
       producer has no drain phase. See [Graceful shutdown](#module-graceful-shutdown).
     * **Lease extension**: Message deadlines are extended automatically to
@@ -302,7 +306,7 @@ defmodule BroadwayCloudPubSub.Producer do
       termination. Uses the same convention as `:telemetry.span/3`.
 
       * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :start]` - drain
-        initiated. Emitted before the stream is closed or any messages are nacked.
+        initiated. Emitted before the stream is half-closed or any messages are nacked.
 
         Measurements: `%{system_time: integer(), monotonic_time: integer(),
         buffered_count: non_neg_integer(), outstanding_count: non_neg_integer(),
@@ -526,7 +530,7 @@ defmodule BroadwayCloudPubSub.Producer do
   def prepare_for_draining(state) do
     %{manager_pid: manager_pid} = state
 
-    # Single atomic call: stops the reader, nacks + clears buffered messages,
+    # Single atomic call: half-closes the stream, nacks + clears buffered messages,
     # removes them from outstanding, and sets draining mode on the StreamManager.
     {:ok, _nacked_count} = StreamManager.prepare_for_draining(manager_pid)
 

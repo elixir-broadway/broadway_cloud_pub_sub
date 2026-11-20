@@ -42,7 +42,7 @@ defmodule BroadwayCloudPubSub.MixProject do
       {:nimble_options, "~> 0.4 or ~> 1.0"},
       {:telemetry, "~> 1.0"},
       {:goth, "~> 1.3", optional: true},
-      {:grpc, "~> 1.0"},
+      {:grpc, "~> 1.1"},
       {:protobuf, "~> 0.17"},
       {:ex_doc, "~> 0.23", only: :docs},
       {:bypass, "~> 2.1", only: :test}
