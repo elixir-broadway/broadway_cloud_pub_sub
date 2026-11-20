@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+
+- In the streaming producer, a `:noop` acknowledgement (`on_success` or
+  `on_failure`) now releases the message from lease management. Pub/Sub
+  redelivers it once its current ack deadline expires, like with the pull
+  producer. Previously its lease kept being extended until
+  `:max_extension_ms` (default 60 minutes), and a shutdown before then nacked
+  it per `:on_shutdown`.
+
 ## [2.0.0]
 
 2.0 introduces a new default producer based on the gRPC StreamingPull API.

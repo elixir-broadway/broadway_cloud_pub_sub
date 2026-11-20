@@ -82,8 +82,9 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       Configures the acknowledgement behaviour for failed messages. The
       default makes failed messages immediately available for redelivery.
 
-      Unlike with `BroadwayCloudPubSub.Pull.Producer`, `:noop` keeps the
-      message's lease extended; see the Acknowledgements section.
+      With `:noop` the message is redelivered once its current lease expires,
+      after a delay set by the producer rather than the subscription's
+      `ackDeadlineSeconds`; see the Acknowledgements section.
       """
     ],
     on_shutdown: [

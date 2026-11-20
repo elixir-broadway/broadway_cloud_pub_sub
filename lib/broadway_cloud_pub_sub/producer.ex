@@ -68,14 +68,14 @@ defmodule BroadwayCloudPubSub.Producer do
   Supported values:
 
     * `:ack` - acknowledge the message; Pub/Sub removes it from the subscription.
-    * `:noop` - do nothing. The message stays under lease management, so its
-      lease keeps being extended until `:max_extension_ms` (default 60 minutes)
-      has passed since it was received; after that the lease is no longer
-      extended and the message is redelivered once its current ack deadline
-      expires. Until then it counts towards `:max_outstanding_messages` and
-      `:max_outstanding_bytes`, and a graceful shutdown waits the full
-      `:drain_timeout_ms` for it. Use `{:nack, seconds}` to delay redelivery
-      instead.
+    * `:noop` - send nothing to Pub/Sub and stop extending the message's lease.
+      Pub/Sub redelivers the message once the ack deadline from its last lease
+      extension expires. The producer sets that deadline (see
+      [Lease management](#module-lease-management)), not the subscription's
+      `ackDeadlineSeconds`, so it is anywhere from 10 to 600 seconds. Until
+      then, the server counts the message towards `:max_outstanding_messages`
+      and `:max_outstanding_bytes`. Prefer `{:nack, seconds}` when you want a
+      predictable redelivery delay.
     * `:nack` - equivalent to `{:nack, 0}`; makes the message immediately
       available for redelivery.
     * `{:nack, seconds}` - sets `ackDeadlineSeconds` to `seconds` for the
@@ -106,7 +106,8 @@ defmodule BroadwayCloudPubSub.Producer do
   the AckBatcher. The extension interval is derived from the effective ack
   deadline with randomized jitter to spread out RPC calls.
 
-  Messages are tracked until they are acknowledged, nacked, or until
+  Messages are tracked until they are acknowledged, nacked, released by a
+  `:noop` acknowledgement, or until
   `:max_extension_ms` elapses (default 60 minutes), after which the server
   redelivers them. This prevents a stuck consumer from holding messages
   indefinitely. The `extend_leases` and `lease_expired` telemetry events
@@ -537,8 +538,9 @@ defmodule BroadwayCloudPubSub.Producer do
     if Process.alive?(manager_pid) do
       # Nack any messages still in outstanding so they are redelivered promptly
       # instead of waiting for their ack deadline to expire naturally. This
-      # covers edge cases like on_failure: :noop (acknowledger does nothing) or
-      # the drain timeout firing before all processors complete.
+      # covers edge cases like the drain timeout firing before all processors
+      # complete. Messages released by a :noop acknowledgement are no longer
+      # outstanding, so they are left to expire at their current deadline.
       #
       # nack_ack_ids sends a cast to StreamManager (which routes to AckBatcher),
       # then close/1 calls flush_batcher_if_alive. Since the cast is enqueued

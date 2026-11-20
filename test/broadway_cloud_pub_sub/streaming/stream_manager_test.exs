@@ -1979,6 +1979,78 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
   end
 
   # ============================================================
+  # release — :noop acknowledgements leave lease management
+  # ============================================================
+
+  describe "release/2" do
+    test "removes ack_ids from outstanding so their leases are no longer extended" do
+      pid = start_manager()
+      test_pid = self()
+      telemetry_name = "test-release-extend-leases-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        telemetry_name,
+        [:broadway_cloud_pub_sub, :streaming, :stream, :extend_leases],
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :extend_leases}
+      )
+
+      on_exit(fn -> :telemetry.detach(telemetry_name) end)
+
+      StreamManager.notify_demand(pid, 10)
+
+      send(
+        pid,
+        {:stream_messages, [received_message("noop-1", "a"), received_message("kept-1", "b")]}
+      )
+
+      assert_receive {:stream_messages, [_, _]}, 500
+
+      StreamManager.release(pid, ["noop-1"])
+      assert StreamManager.get_outstanding(pid) == ["kept-1"]
+
+      send(pid, :extend_leases)
+      assert_receive {:extend_leases, %{count: 1}, _metadata}, 500
+    end
+
+    test "records the processing time like an ack or nack" do
+      pid = start_manager()
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("noop-dist", "data")]})
+      assert_receive {:stream_messages, [_]}, 500
+
+      dist_before = :sys.get_state(pid).ack_time_dist
+      StreamManager.release(pid, ["noop-dist"])
+      sync(pid)
+
+      refute :sys.get_state(pid).ack_time_dist == dist_before
+    end
+
+    test "unknown ack_ids are ignored" do
+      pid = start_manager()
+      StreamManager.release(pid, ["never-received"])
+      assert StreamManager.get_outstanding(pid) == []
+    end
+
+    test "release during drain allows drain to complete" do
+      pid = start_manager(drain_timeout_ms: 5_000)
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("drain-noop", "data")]})
+      assert_receive {:stream_messages, [_]}, 500
+
+      {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      assert :sys.get_state(pid).drain_timer != nil
+
+      StreamManager.release(pid, ["drain-noop"])
+      sync(pid)
+
+      state = :sys.get_state(pid)
+      assert map_size(state.outstanding) == 0
+      assert state.drain_timer == nil
+    end
+  end
+
+  # ============================================================
   # P0-04: pressure_snapshot telemetry
   # ============================================================
 

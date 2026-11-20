@@ -96,6 +96,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
   end
 
   @doc """
+  Stops lease management for a list of ack_ids without sending anything to
+  Pub/Sub. Used for the `:noop` acknowledgement action.
+
+  The messages are no longer lease-extended, so Pub/Sub redelivers them once
+  their current ack deadline expires. Until then the server still counts them
+  towards the stream's flow-control limits.
+  """
+  @spec release(pid(), [String.t()]) :: :ok
+  def release(pid, ack_ids) when is_list(ack_ids) do
+    GenServer.cast(pid, {:release, ack_ids})
+  end
+
+  @doc """
   Prepares the StreamManager for graceful shutdown. Called from the
   producer's `prepare_for_draining/1`. Atomically:
 
@@ -493,6 +506,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     state = %{state | outstanding: new_outstanding, ack_time_dist: new_dist}
 
     AckBatcher.modack(state.ack_batcher, ack_ids, deadline_seconds)
+
+    {:noreply, maybe_complete_drain(state)}
+  end
+
+  # A :noop acknowledgement: stop extending the lease and let the current ack
+  # deadline lapse, so Pub/Sub redelivers the message. Nothing is sent to the
+  # server. Removing it from outstanding also means the drain no longer waits
+  # for it and terminate/2 does not nack it per on_shutdown.
+  def handle_cast({:release, ack_ids}, state) do
+    {new_outstanding, new_dist} =
+      MessageDispatch.record_and_remove(state.outstanding, state.ack_time_dist, ack_ids, now_ms())
+
+    state = %{state | outstanding: new_outstanding, ack_time_dist: new_dist}
 
     {:noreply, maybe_complete_drain(state)}
   end
