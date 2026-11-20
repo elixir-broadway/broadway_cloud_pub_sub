@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [2.1.0]
+
 ### Added
 
 - The `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack | :modack, :stop]`
