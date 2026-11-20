@@ -19,6 +19,10 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   #   - Terminal error     → stop the GenServer via {:stop, reason, reply, state} so the
   #                          supervisor restarts it fresh. The caller receives {:error, reason}
   #                          first (from the reply in the stop tuple) so it can retain ack_ids.
+  #                          Exception: a terminal status that carries per-ack-id details
+  #                          (an exactly-once ErrorInfo, see AckResult) is handled like a
+  #                          retryable error, without the reconnect, and the GenServer keeps
+  #                          running.
   #
   # Retry timing and back-pressure belong to the caller (AckBatcher), not here.
   #

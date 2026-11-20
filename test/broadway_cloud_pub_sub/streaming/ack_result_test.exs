@@ -202,7 +202,7 @@ defmodule BroadwayCloudPubSub.Streaming.AckResultTest do
     end
   end
 
-  describe "parse_error_details/1 — ErrorInfo with another reason" do
+  describe "parse_error_details/1: ErrorInfo with another reason" do
     test "ignores an ErrorInfo that is not an EXACTLY_ONCE_ACKID_FAILURE" do
       error_info = %Google.Rpc.ErrorInfo{
         reason: "IAM_PERMISSION_DENIED",
