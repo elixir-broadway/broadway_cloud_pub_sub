@@ -165,8 +165,9 @@ defmodule BroadwayCloudPubSub.Producer do
 
   When the `PUBSUB_EMULATOR_HOST` environment variable is set (for example to
   `"localhost:8085"`), the producer connects to the emulator at that address
-  without TLS and without Goth, unless `:grpc_endpoint`, `:use_ssl` or
-  `:token_generator` are given. To configure the emulator explicitly instead:
+  without TLS and without Goth. The variable only fills in the options you leave
+  out: each of `:grpc_endpoint`, `:use_ssl` and `:token_generator` that you give
+  is kept. To configure the emulator explicitly instead:
 
       {BroadwayCloudPubSub.Producer,
        subscription: "projects/my-project/subscriptions/my-subscription",
