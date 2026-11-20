@@ -3,7 +3,8 @@ defmodule BroadwayCloudPubSub.Streaming.Acknowledger do
 
   # Broadway.Acknowledger for StreamingPull.
   # Delegates ack/nack/modifyAckDeadline to the StreamManager via
-  # gRPC requests on the bidirectional stream.
+  # gRPC requests on the bidirectional stream. A :noop asks the StreamManager
+  # to release the message from lease management without sending anything.
 
   alias Broadway.Acknowledger
   alias BroadwayCloudPubSub.Streaming.Options
@@ -98,7 +99,9 @@ defmodule BroadwayCloudPubSub.Streaming.Acknowledger do
     end)
   end
 
-  defp apply_action(:noop, _ack_ids, _manager_server), do: :ok
+  defp apply_action(:noop, ack_ids, manager_server) do
+    BroadwayCloudPubSub.Streaming.StreamManager.release(manager_server, ack_ids)
+  end
 
   defp apply_action(:ack, ack_ids, manager_server) do
     BroadwayCloudPubSub.Streaming.StreamManager.acknowledge(manager_server, ack_ids)

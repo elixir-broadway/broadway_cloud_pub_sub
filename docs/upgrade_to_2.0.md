@@ -246,7 +246,9 @@ subscription's `ackDeadlineSeconds`. In 2.0 the default is `{:nack, 0}`, making
 them immediately available for redelivery, matching the behaviour of the official
 Google Cloud Pub/Sub client libraries.
 
-**If you relied on the old default**, add `on_failure: :noop` explicitly:
+**If you relied on the old default**, set `on_failure` explicitly. For the pull
+producer, `:noop` restores the 1.x behaviour. For the streaming producer, use
+`{:nack, seconds}` with the redelivery delay you want:
 
 ```elixir
 # Pull producer
@@ -255,12 +257,19 @@ Google Cloud Pub/Sub client libraries.
  subscription: "projects/my-project/subscriptions/my-sub",
  on_failure: :noop}
 
-# Streaming producer
+# Streaming producer: redeliver failed messages after 60 seconds
 {BroadwayCloudPubSub.Producer,
  goth: MyApp.Goth,
  subscription: "projects/my-project/subscriptions/my-sub",
- on_failure: :noop}
+ on_failure: {:nack, 60}}
 ```
+
+With the streaming producer, `:noop` does not give the 1.x timing. The streaming
+producer extends leases with its own ack deadlines rather than the
+subscription's `ackDeadlineSeconds`, so a `:noop` message is redelivered when
+the deadline from its last lease extension expires, anywhere from 10 to 600
+seconds later. Use `{:nack, seconds}` for a predictable delay. See the
+Acknowledgements section of `BroadwayCloudPubSub.Producer`.
 
 For most applications the new default is the right behaviour. A failed message
 is retried immediately rather than holding up the subscription until its deadline
