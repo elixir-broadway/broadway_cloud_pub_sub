@@ -139,14 +139,24 @@ defmodule BroadwayCloudPubSub.Producer do
 
   ## Graceful shutdown
 
-  On shutdown, the producer:
+  On shutdown, Broadway asks the producer to drain, then waits for the
+  processors and batchers to finish their in-flight messages (bounded by
+  Broadway's own `:shutdown` option). The producer:
 
     1. Nacks all buffered messages (received but not yet dispatched to
        processors) per the `:on_shutdown` option (default `{:nack, 5}`).
-    2. Stops the gRPC stream to prevent new messages from arriving.
-    3. Waits up to `:drain_timeout_ms` (default 30s) for in-flight messages
-       (dispatched to processors but not yet acked/nacked) to be processed.
-    4. Force-closes the stream after the drain timeout.
+    2. Stops reading from the gRPC stream so no new messages arrive. The unary
+       channel stays up, so in-flight messages can still be acked or nacked.
+    3. Closes the stream as soon as no messages are outstanding.
+    4. Once the processors and batchers have finished, nacks every message
+       still outstanding per `:on_shutdown` and closes the stream. Messages
+       already released by a `:noop` acknowledgement are not outstanding, so
+       they are left to expire at their current ack deadline.
+
+  `:drain_timeout_ms` (default 30s) only matters when the processors take
+  longer than that to finish. When it elapses, the producer nacks the
+  outstanding messages per `:on_shutdown` and closes the stream early, so
+  messages still being processed may be redelivered.
 
   The drain lifecycle is tracked via the `drain` telemetry span
   (see [Telemetry](#module-telemetry)).

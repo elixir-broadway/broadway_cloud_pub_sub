@@ -236,13 +236,13 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       type: :pos_integer,
       default: 30_000,
       doc: """
-      Maximum time in milliseconds to wait for in-flight messages to be
-      processed and acknowledged during graceful shutdown. After this timeout,
-      any remaining outstanding messages are nacked (per the `on_shutdown`
-      setting) and the connection is force-closed.
-
-          This drain phase waits for all outstanding messages to be acked before
-          calling `CloseSend` on the stream.
+      Maximum time in milliseconds the producer keeps the stream open for
+      in-flight messages during graceful shutdown. If the processors are still
+      working when it elapses, the remaining outstanding messages are nacked
+      (per the `on_shutdown` setting) and the stream is closed. It does not
+      make shutdown wait longer: once the processors finish, any messages
+      still outstanding are nacked right away. See the Graceful shutdown
+      section of `BroadwayCloudPubSub.Producer`.
       """
     ],
 
