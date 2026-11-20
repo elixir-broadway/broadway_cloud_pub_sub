@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Both producers read the `PUBSUB_EMULATOR_HOST` environment variable. When it
+  is set, they connect to the emulator at that address and skip Goth, unless the
+  connection or `:token_generator` options are given.
+
 ## [2.1.0]
 
 ### Added
