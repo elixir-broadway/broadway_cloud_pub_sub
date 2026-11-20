@@ -48,6 +48,23 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     def handle_call(_msg, _from, state), do: {:reply, :ok, state}
   end
 
+  # The default client without the optional `close_send/2` callback.
+  defmodule NoCloseSendClient do
+    @moduledoc false
+    alias BroadwayCloudPubSub.Streaming.GrpcClient
+
+    defdelegate init(opts), to: GrpcClient
+    defdelegate connect(config), to: GrpcClient
+    defdelegate disconnect(channel, config), to: GrpcClient
+    defdelegate connection_pid(channel), to: GrpcClient
+    defdelegate streaming_pull(channel, config), to: GrpcClient
+    defdelegate send_request(stream, request, config), to: GrpcClient
+    defdelegate recv(stream, config), to: GrpcClient
+    defdelegate cancel(stream, config), to: GrpcClient
+    defdelegate acknowledge(channel, request, config), to: GrpcClient
+    defdelegate modify_ack_deadline(channel, request, config), to: GrpcClient
+  end
+
   # Start a StreamManager, inject producer_pid so it doesn't try to connect.
   # Also starts a real AckBatcher (backed by StubRpcClient) registered under
   # the name that StreamManager derives from broadway_name.
@@ -103,6 +120,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
   # Synchronous barrier: drains all prior mailbox messages in StreamManager
   # before returning. Uses get_outstanding (a GenServer.call) to guarantee ordering.
   defp sync(pid), do: StreamManager.get_outstanding(pid)
+
+  # Polls until fun.() is truthy. For results that arrive from async tasks or
+  # timers, where there is no message the test can wait on.
+  defp wait_until(fun, attempts \\ 200) do
+    cond do
+      fun.() -> :ok
+      attempts == 0 -> flunk("condition was never met")
+      true -> Process.sleep(10) && wait_until(fun, attempts - 1)
+    end
+  end
+
+  defp wait_for_no_pending_modacks(pid),
+    do: wait_until(fn -> map_size(:sys.get_state(pid).pending_receipt_modacks) == 0 end)
 
   # Returns the number of messages currently in the StreamManager's message_buffer.
   defp buffer_length(pid) do
@@ -551,8 +581,14 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       StreamManager.notify_demand(pid, 10)
       StreamManager.prepare_for_draining(pid)
 
-      send(pid, {:stream_error, %GRPC.RPCError{status: 5, message: "not found"}})
-      sync(pid)
+      logs =
+        capture_log(fn ->
+          send(pid, {:stream_error, %GRPC.RPCError{status: 5, message: "not found"}})
+          sync(pid)
+        end)
+
+      assert logs =~ "Terminal gRPC stream error during drain on subscription"
+      assert logs =~ "status: 5"
 
       # During drain, terminal errors don't stop the GenServer
       assert Process.alive?(pid)
@@ -626,8 +662,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       # Drain timer should be set.
       assert state.drain_timer != nil
 
-      # Wait for drain_timeout to fire (50ms + some margin).
-      Process.sleep(150)
+      wait_until(fn -> :sys.get_state(pid).drain_timer == nil end)
 
       state = :sys.get_state(pid)
       # After drain_timeout, outstanding should be empty (messages were nacked).
@@ -648,8 +683,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       {:ok, 0} = StreamManager.prepare_for_draining(pid)
 
-      # Wait for drain_timeout.
-      Process.sleep(150)
+      wait_until(fn -> :sys.get_state(pid).drain_timer == nil end)
 
       state = :sys.get_state(pid)
       assert map_size(state.outstanding) == 0
@@ -714,6 +748,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert state.grpc_stream == nil
       assert state.reconnect_ref != nil
+    end
+
+    test "does nothing once the stream is half-closed" do
+      pid = start_manager(keepalive_interval_ms: 10, backoff_min: 60_000)
+
+      :sys.replace_state(pid, fn s -> %{s | grpc_stream: :fake_stream, send_closed: true} end)
+
+      send(pid, :send_keepalive)
+      sync(pid)
+
+      # Writing to the fake stream would fail and reset the connection.
+      state = :sys.get_state(pid)
+      assert state.grpc_stream == :fake_stream
     end
 
     test "does not crash when stream is nil (reconnecting)" do
@@ -1344,7 +1391,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     end
 
     test "end_stream and cancel notifications reach test_pid" do
-      _pid =
+      pid =
         start_manager(
           adapter: GrpcDynamicAdapter,
           test_pid: self(),
@@ -1360,7 +1407,96 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       # StreamManager will close the reader and schedule reconnect,
       # which triggers a new connect — we just verify the process survives
       # and the test doesn't hang.
-      Process.sleep(100)
+      sync(pid)
+    end
+
+    test "close/1 returns without waiting for the server to end the stream" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      await_stream_opened(pid)
+
+      closer = Task.async(fn -> StreamManager.close(pid) end)
+
+      assert Task.yield(closer, 500) == {:ok, :ok}
+      refute_received {:adapter_call, :end_stream}
+    end
+
+    test "prepare_for_draining/1 skips the half-close for clients without close_send/2" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          grpc_client: NoCloseSendClient,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      await_stream_opened(pid)
+
+      # Keep the drain open so the stream state can be inspected.
+      :sys.replace_state(pid, fn s -> %{s | outstanding: %{"in-flight" => %{}}} end)
+
+      assert {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      refute_received {:adapter_call, :end_stream}
+
+      # Without a half-close the stream is closed; acks use the unary channel.
+      assert_receive {:adapter_call, :cancel}, 500
+      assert_receive {:adapter_call, :disconnect}, 500
+      state = :sys.get_state(pid)
+      assert state.reader_pid == nil
+      assert state.grpc_stream == nil
+      assert state.channel == nil
+    end
+
+    test "a stream that opens after the drain started is half-closed" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      await_stream_opened(pid)
+
+      # Replay the hand-over as if it arrived after the drain started.
+      %{reader_pid: reader, grpc_stream: stream} = :sys.get_state(pid)
+
+      :sys.replace_state(pid, fn s ->
+        %{s | draining: true, grpc_stream: nil, outstanding: %{"in-flight" => %{}}}
+      end)
+
+      send(pid, {:stream_opened, reader, stream})
+
+      assert_receive {:adapter_call, :end_stream}, 2_000
+      assert :sys.get_state(pid).keepalive_timer == nil
+    end
+
+    test "prepare_for_draining/1 half-closes the stream without waiting for the server" do
+      pid =
+        start_manager(
+          adapter: GrpcDynamicAdapter,
+          test_pid: self(),
+          token_generator: {__MODULE__, :noop_token, []}
+        )
+
+      assert_receive {:adapter_connected, _ctrl}, 2_000
+      assert_receive {:adapter_call, {:send_data, _}}, 2_000
+      await_stream_opened(pid)
+
+      drainer = Task.async(fn -> StreamManager.prepare_for_draining(pid) end)
+
+      assert_receive {:adapter_call, :end_stream}, 2_000
+      assert {:ok, {:ok, 0}} = Task.yield(drainer, 500)
     end
   end
 
@@ -1377,12 +1513,28 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       GenServer.start_link(__MODULE__, test_pid)
     end
 
-    def init(test_pid), do: {:ok, %{test_pid: test_pid, next_response: :ok}}
+    def init(test_pid),
+      do: {:ok, %{test_pid: test_pid, next_response: :ok, hold: false, held: []}}
 
-    def handle_call({:modify_ack_deadline, ids, deadline}, _from, state) do
+    def handle_call({:modify_ack_deadline, ids, deadline}, from, state) do
       send(state.test_pid, {:rpc_call, {:modack, ids, deadline}})
       result = if state.next_response == :ok, do: :ok, else: state.next_response
-      {:reply, result, %{state | next_response: :ok}}
+      state = %{state | next_response: :ok}
+
+      if state.hold do
+        {:noreply, %{state | held: [{from, result} | state.held]}}
+      else
+        {:reply, result, state}
+      end
+    end
+
+    # While held, modack RPCs block until release, so a test can observe the
+    # manager's pending state deterministically and then let the real result flow.
+    def handle_call(:hold, _from, state), do: {:reply, :ok, %{state | hold: true}}
+
+    def handle_call(:release, _from, state) do
+      Enum.each(state.held, fn {from, result} -> GenServer.reply(from, result) end)
+      {:reply, :ok, %{state | hold: false, held: []}}
     end
 
     def handle_call({:acknowledge, _ids}, _from, state) do
@@ -1467,9 +1619,10 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
   describe "exactly-once receipt modack gate — {:stream_messages, ...}" do
     test "in exactly-once mode, messages are NOT immediately forwarded to producer" do
-      {pid, _rpc} = start_manager_with_spy_rpc()
+      {pid, rpc} = start_manager_with_spy_rpc()
       enable_exactly_once(pid)
       StreamManager.notify_demand(pid, 10)
+      :ok = GenServer.call(rpc, :hold)
 
       send(pid, {:stream_messages, [received_message("eo-ack-1", "data")]})
       sync(pid)
@@ -1480,6 +1633,8 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       # State has one pending entry
       state = :sys.get_state(pid)
       assert map_size(state.pending_receipt_modacks) == 1
+
+      :ok = GenServer.call(rpc, :release)
     end
 
     test "in standard mode, messages are forwarded immediately (no gating)" do
@@ -1496,19 +1651,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
     end
 
     test "messages are added to outstanding after receipt modack succeeds" do
-      {pid, _rpc} = start_manager_with_spy_rpc()
+      {pid, rpc} = start_manager_with_spy_rpc()
       enable_exactly_once(pid)
       StreamManager.notify_demand(pid, 10)
+      :ok = GenServer.call(rpc, :hold)
 
       send(pid, {:stream_messages, [received_message("eo-ack-2", "data")]})
       sync(pid)
 
-      state_before = :sys.get_state(pid)
-      [ref] = Map.keys(state_before.pending_receipt_modacks)
+      assert map_size(:sys.get_state(pid).pending_receipt_modacks) == 1
 
-      # Simulate receipt modack success
-      send(pid, {:receipt_modack_result, ref, {:ok, []}})
-      sync(pid)
+      # Let the real receipt modack RPC succeed
+      :ok = GenServer.call(rpc, :release)
+      assert_receive {:stream_messages, _}, 500
 
       state_after = :sys.get_state(pid)
       assert map_size(state_after.pending_receipt_modacks) == 0
@@ -1570,11 +1725,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       :ok = GenServer.call(rpc, {:set_response_sync, {:error, :unavailable}})
 
       send(pid, {:stream_messages, [received_message("fail-1", "data")]})
-      # Wait for the Task's RPC call to complete and result to be processed
-      sync(pid)
-      # Give extra time for the async Task result to arrive and be processed
-      Process.sleep(200)
-      sync(pid)
+      wait_for_no_pending_modacks(pid)
 
       refute_received {:stream_messages, _}
 
@@ -2268,8 +2419,8 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       {:ok, 0} = StreamManager.prepare_for_draining(pid)
 
-      # Wait long enough for timeout to fire
-      Process.sleep(150)
+      # Wait for the drain timeout to fire and finish
+      wait_until(fn -> :sys.get_state(pid).drain_timer == nil end)
       sync(pid)
 
       refute_received {:drain_stop, _, _}
@@ -2579,9 +2730,10 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
   describe "EO behavior invariants" do
     test "in EO mode, messages are NOT in outstanding before receipt modack succeeds" do
-      {pid, _rpc} = start_manager_with_spy_rpc()
+      {pid, rpc} = start_manager_with_spy_rpc()
       enable_exactly_once(pid)
       StreamManager.notify_demand(pid, 10)
+      :ok = GenServer.call(rpc, :hold)
 
       send(pid, {:stream_messages, [received_message("eo-inv-1", "data")]})
       sync(pid)
@@ -2590,23 +2742,24 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert map_size(state.pending_receipt_modacks) == 1
       refute Map.has_key?(state.outstanding, "eo-inv-1")
+
+      :ok = GenServer.call(rpc, :release)
     end
 
     test "in EO mode, messages are added to outstanding only after receipt modack {:ok, []}" do
-      {pid, _rpc} = start_manager_with_spy_rpc()
+      {pid, rpc} = start_manager_with_spy_rpc()
       enable_exactly_once(pid)
       StreamManager.notify_demand(pid, 10)
+      :ok = GenServer.call(rpc, :hold)
 
       send(pid, {:stream_messages, [received_message("eo-inv-2", "data")]})
       sync(pid)
 
-      # Retrieve the pending ref
-      state = :sys.get_state(pid)
-      [ref] = Map.keys(state.pending_receipt_modacks)
+      assert map_size(:sys.get_state(pid).pending_receipt_modacks) == 1
 
-      # Confirm receipt modack success
-      send(pid, {:receipt_modack_result, ref, {:ok, []}})
-      sync(pid)
+      # Let the real receipt modack RPC succeed
+      :ok = GenServer.call(rpc, :release)
+      assert_receive {:stream_messages, [%{data: "data"}]}, 500
 
       state = :sys.get_state(pid)
       assert map_size(state.pending_receipt_modacks) == 0
@@ -2621,8 +2774,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       :ok = GenServer.call(rpc, {:set_response_sync, {:error, :unavailable}})
 
       send(pid, {:stream_messages, [received_message("eo-inv-fail", "data")]})
-      Process.sleep(200)
-      sync(pid)
+      wait_for_no_pending_modacks(pid)
 
       refute_received {:stream_messages, _}
 
@@ -2658,7 +2810,7 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       # Start with a spy RPC so we can control modack responses.
       # We need to use start_manager_with_spy_rpc throughout so the spy
       # is in place before we enable EO.
-      {pid, _rpc} = start_manager_with_spy_rpc()
+      {pid, rpc} = start_manager_with_spy_rpc()
       StreamManager.notify_demand(pid, 10)
 
       # Non-EO (default): message dispatched immediately
@@ -2669,8 +2821,9 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert_receive {:stream_messages, _}, 500
       assert map_size(:sys.get_state(pid).pending_receipt_modacks) == 0
 
-      # Enable EO mode
+      # Enable EO mode and hold the receipt modack so pending state is stable
       enable_exactly_once(pid)
+      :ok = GenServer.call(rpc, :hold)
 
       # EO: new message must be held in pending_receipt_modacks, not dispatched
       send(pid, {:stream_messages, [received_message("after-eo", "data")]})
@@ -2678,6 +2831,8 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
 
       state = :sys.get_state(pid)
       assert map_size(state.pending_receipt_modacks) == 1
+
+      :ok = GenServer.call(rpc, :release)
     end
   end
 end

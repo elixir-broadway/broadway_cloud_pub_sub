@@ -112,6 +112,20 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   @callback recv(stream(), config()) :: {:ok, Enumerable.t()} | {:error, term()}
 
   @doc """
+  Half-closes an open gRPC stream (HTTP/2 END_STREAM, gRPC "CloseSend").
+
+  Called when draining starts, once nothing more will be sent, so the server
+  stops delivering messages. Returns `:ok` if the half-close was sent, or
+  `{:error, reason}` if the stream could not be written. Optional: if a client
+  does not implement it, or it returns an error, the stream is cancelled and
+  its connection closed instead (see `cancel/2`), so the server stops
+  delivering immediately rather than finishing the stream.
+  """
+  @callback close_send(stream(), config()) :: :ok | {:error, term()}
+
+  @optional_callbacks close_send: 2
+
+  @doc """
   Cancels an open gRPC stream.
 
   Called during graceful shutdown or error recovery to stop receiving new messages.
@@ -125,7 +139,12 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   Sends an `Acknowledge` unary RPC to the Pub/Sub service.
 
   `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.AcknowledgeRequest` struct. Returns `{:ok, response}`
-  on success or `{:error, reason}` on failure. Implementations may emit telemetry spans.
+  on success or `{:error, reason}` on failure.
+
+  Implementations may emit telemetry spans. To match the default client, emit
+  `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack, ...]` events whose
+  `:stop` metadata includes `:result` (`:ok` or `:error`) and, on failure, `:error`.
+  See the "Telemetry" section of `BroadwayCloudPubSub.Streaming.GrpcClient`.
   """
   @callback acknowledge(channel(), request :: term(), config()) ::
               {:ok, term()} | {:error, term()}
@@ -134,8 +153,12 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   Sends a `ModifyAckDeadline` unary RPC to the Pub/Sub service.
 
   `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.ModifyAckDeadlineRequest` struct. Returns
-  `{:ok, response}` on success or `{:error, reason}` on failure. Implementations
-  may emit telemetry spans.
+  `{:ok, response}` on success or `{:error, reason}` on failure.
+
+  Implementations may emit telemetry spans. To match the default client, emit
+  `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :modack, ...]` events whose
+  `:stop` metadata includes `:result` (`:ok` or `:error`) and, on failure, `:error`.
+  See the "Telemetry" section of `BroadwayCloudPubSub.Streaming.GrpcClient`.
   """
   @callback modify_ack_deadline(channel(), request :: term(), config()) ::
               {:ok, term()} | {:error, term()}

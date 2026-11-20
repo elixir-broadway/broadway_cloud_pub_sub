@@ -116,7 +116,9 @@ defmodule BroadwayCloudPubSub.Pull.Options do
       default: @default_base_url,
       doc: """
       The base URL for the Cloud Pub/Sub service.
-      This option is mostly useful for testing via the Pub/Sub emulator.
+      This option is mostly useful for testing via the Pub/Sub emulator,
+      for example `"http://localhost:8085"`. See the
+      [Pub/Sub emulator guide](emulator.md).
       """
     ],
     finch: [

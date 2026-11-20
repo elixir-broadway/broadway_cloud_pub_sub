@@ -282,7 +282,7 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       Interval in milliseconds at which HTTP/2 PING frames are sent on the gRPC
       connection to keep it alive. This prevents Google Cloud's load balancer
       from closing idle connections (which it does after roughly 20 seconds by
-      default). Only applies to the `:gun` adapter.
+      default). Applies to the `:gun` and `:mint` adapters.
       """
     ],
     interceptors: [

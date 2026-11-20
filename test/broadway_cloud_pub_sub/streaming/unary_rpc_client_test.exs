@@ -454,6 +454,8 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
     @impl true
     def recv(_stream, _config), do: {:error, :not_implemented}
     @impl true
+    def close_send(_stream, _config), do: :ok
+    @impl true
     def cancel(_stream, _config), do: :ok
     @impl true
     def acknowledge(_channel, _request, _config), do: {:ok, %{}}
@@ -495,6 +497,8 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
     def send_request(_stream, _request, _config), do: {:ok, nil}
     @impl true
     def recv(_stream, _config), do: {:error, :not_implemented}
+    @impl true
+    def close_send(_stream, _config), do: :ok
     @impl true
     def cancel(_stream, _config), do: :ok
 

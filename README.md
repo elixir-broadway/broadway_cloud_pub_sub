@@ -75,7 +75,8 @@ Broadway.start_link(MyBroadway,
 ```
 
 See `BroadwayCloudPubSub.Producer` for the full option reference, including flow
-control, reconnection backoff, graceful shutdown, and telemetry.
+control, reconnection backoff, graceful shutdown, and telemetry. To run against
+the local Pub/Sub emulator, see the [emulator guide](docs/emulator.md).
 
 ### HTTP/2 adapter
 
