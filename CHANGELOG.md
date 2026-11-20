@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outstanding message's lease expires (a message past `:max_extension_ms`),
   instead of waiting for `:drain_timeout_ms` and reporting a timeout.
 
+## [2.1.0]
+
+### Added
+
+- The `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack | :modack, :stop]`
+  telemetry events now report the RPC outcome as `:result` (`:ok` or `:error`)
+  and, on failure, the returned `:error`.
+- Require `grpc ~> 1.1`.
+- Half-close the gRPC stream (new optional `close_send/2` callback on `BroadwayCloudPubSub.Streaming.Client`) when draining starts, so the server stops sending new messages.
+
+### Fixed
+
+- The `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack | :modack, :stop]`
+  telemetry events now carry the documented `:name`, `:subscription` and `:count`
+  metadata, which was previously only on `:start`.
+- Cancel the gRPC stream before stopping its reader on close, which removes the Mint warning about a dead stream response process.
+- Fix the `:mint` adapter failing to connect: it rejects unknown adapter options as of `grpc` 1.1, so it now gets its native `:keepalive` option. `:keepalive_interval_ms` applies to `:mint` too, which also closes and replaces a connection after three unanswered pings.
+
 ## [2.0.0]
 
 2.0 introduces a new default producer based on the gRPC StreamingPull API.

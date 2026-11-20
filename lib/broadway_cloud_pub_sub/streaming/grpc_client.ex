@@ -26,6 +26,11 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
     Measurements: as described in `:telemetry.span/3`.
     Metadata: `%{name: broadway_name, subscription: subscription, count: ack_count}`
 
+  The `:stop` metadata also includes `:result`, which is `:ok` when the RPC
+  succeeded and `:error` when it failed. On failure it includes `:error` as well,
+  with the error the RPC returned (usually a `GRPC.RPCError`). A failed RPC still
+  ends the span with `:stop`: `:exception` is only emitted when the call raises.
+
   Custom `BroadwayCloudPubSub.Streaming.Client` implementations that wish to emit
   the same events should use the same event name prefix and metadata shape.
   """
@@ -93,6 +98,14 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   end
 
   @impl BroadwayCloudPubSub.Streaming.Client
+  def close_send(stream, _config) do
+    GRPC.Stub.end_stream(stream)
+    :ok
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  @impl BroadwayCloudPubSub.Streaming.Client
   def cancel(stream, _config) do
     GRPC.Stub.cancel(stream)
     :ok
@@ -112,7 +125,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       fn ->
         result = Stub.acknowledge(channel, request, timeout: @unary_rpc_timeout_ms)
 
-        {result, %{}}
+        {result, stop_metadata(metadata, result)}
       end,
       Map.get(config, :telemetry_metadata)
     )
@@ -134,11 +147,24 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       fn ->
         result = Stub.modify_ack_deadline(channel, request, timeout: @unary_rpc_timeout_ms)
 
-        {result, %{}}
+        {result, stop_metadata(metadata, result)}
       end,
       Map.get(config, :telemetry_metadata)
     )
   end
+
+  # A failed RPC is returned, not raised, so the span ends with `:stop`.
+  # Record the outcome so handlers can tell a failure from a success.
+  # Only an `{:ok, ...}` reply counts as success; any other return is reported
+  # as an error so an unexpected shape is never counted as a successful RPC.
+  defp stop_metadata(metadata, {:ok, _reply}), do: Map.put(metadata, :result, :ok)
+  defp stop_metadata(metadata, {:ok, _reply, _headers}), do: Map.put(metadata, :result, :ok)
+
+  defp stop_metadata(metadata, {:error, error}),
+    do: Map.merge(metadata, %{result: :error, error: error})
+
+  defp stop_metadata(metadata, other),
+    do: Map.merge(metadata, %{result: :error, error: other})
 
   defp fetch_token(%{token_generator: {mod, fun, args}}) do
     apply(mod, fun, args)
@@ -151,7 +177,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
     keepalive_interval_ms = Map.get(config, :keepalive_interval_ms, 30_000)
     interceptors = Map.get(config, :interceptors, [])
 
-    adapter_opts = [http2_opts: %{keepalive: keepalive_interval_ms, settings_timeout: :infinity}]
+    adapter_opts = adapter_opts(adapter, keepalive_interval_ms)
 
     adapter_opts =
       case Map.get(config, :test_pid) do
@@ -179,4 +205,16 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       {:error, reason} -> {:error, {:connect_failed, reason}}
     end
   end
+
+  # The Mint adapter rejects options it does not know, so it gets its own
+  # keepalive options instead of Gun's `:http2_opts`. Unlike Gun, it can also
+  # close a connection that stops answering pings (three missed pings), so a
+  # silently dropped link is replaced within ~3 intervals instead of waiting
+  # for TCP timeouts. `:keepalive_tolerance` must be positive: 0 closes at once.
+  @doc false
+  def adapter_opts(GRPC.Client.Adapters.Mint, keepalive_interval_ms),
+    do: [keepalive: keepalive_interval_ms, keepalive_tolerance: 3]
+
+  def adapter_opts(_adapter, keepalive_interval_ms),
+    do: [http2_opts: %{keepalive: keepalive_interval_ms, settings_timeout: :infinity}]
 end

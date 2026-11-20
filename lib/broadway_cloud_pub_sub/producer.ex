@@ -145,8 +145,11 @@ defmodule BroadwayCloudPubSub.Producer do
 
     1. Nacks all buffered messages (received but not yet dispatched to
        processors) per the `:on_shutdown` option (default `{:nack, 5}`).
-    2. Stops reading from the gRPC stream so no new messages arrive. The unary
-       channel stays up, so in-flight messages can still be acked or nacked.
+    2. Half-closes the gRPC stream so the server stops sending new messages.
+       If the gRPC client does not implement the optional `close_send/2`
+       callback, or the half-close fails, the stream is cancelled and its
+       connection closed instead. Acks and nacks use a separate unary
+       channel, so in-flight messages can still be acked or nacked.
     3. Closes the stream as soon as no messages are outstanding.
     4. Once the processors and batchers have finished, nacks every message
        still outstanding per `:on_shutdown` and closes the stream. Messages
@@ -155,7 +158,7 @@ defmodule BroadwayCloudPubSub.Producer do
 
   `:drain_timeout_ms` (default 30s) only matters when the processors take
   longer than that to finish. When it elapses, the producer nacks the
-  outstanding messages per `:on_shutdown` and closes the stream early, so
+  outstanding messages per `:on_shutdown` and cancels the stream early, so
   messages still being processed may be redelivered.
 
   The drain lifecycle is tracked via the `drain` telemetry span
@@ -185,6 +188,11 @@ defmodule BroadwayCloudPubSub.Producer do
        use_ssl: false,
        token_generator: {MyApp, :emulator_token, []}}
 
+  where `MyApp.emulator_token/0` returns `{:ok, "emulator"}`; the emulator does
+  not check the token, so Goth is not needed. See the
+  [Pub/Sub emulator guide](emulator.md) for the pull producer, switching on
+  `PUBSUB_EMULATOR_HOST`, and setting up topics and subscriptions.
+
   ## Differences from `BroadwayCloudPubSub.Pull.Producer`
 
     * **Push-based**: Messages arrive via a persistent gRPC stream rather than
@@ -192,8 +200,9 @@ defmodule BroadwayCloudPubSub.Producer do
     * **Flow control**: Controlled at the gRPC stream level via
       `:max_outstanding_messages` and `:max_outstanding_bytes` rather than
       per-request polling. See [Flow control](#module-flow-control).
-    * **Graceful shutdown**: The stream is closed immediately on shutdown to
-      stop new messages arriving; the unary channel stays up so in-flight
+    * **Graceful shutdown**: The stream is half-closed on shutdown so the
+      server stops sending new messages (or cancelled, if the client has no
+      `close_send/2` or the half-close fails); the unary channel stays up so in-flight
       messages can still be acked or nacked during the drain window. The pull
       producer has no drain phase. See [Graceful shutdown](#module-graceful-shutdown).
     * **Lease extension**: Message deadlines are extended automatically to
@@ -314,7 +323,7 @@ defmodule BroadwayCloudPubSub.Producer do
       termination. Uses the same convention as `:telemetry.span/3`.
 
       * `[:broadway_cloud_pub_sub, :streaming, :stream, :drain, :start]` - drain
-        initiated. Emitted before the stream is closed or any messages are nacked.
+        initiated. Emitted before the stream is half-closed or any messages are nacked.
 
         Measurements: `%{system_time: integer(), monotonic_time: integer(),
         buffered_count: non_neg_integer(), outstanding_count: non_neg_integer(),
@@ -401,6 +410,10 @@ defmodule BroadwayCloudPubSub.Producer do
 
     * `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :modack, :start | :stop | :exception]` -
       wraps each `ModifyAckDeadline` unary RPC call.
+
+    The `:stop` metadata also includes `:result` (`:ok` or `:error`) and, when
+    the RPC failed, the returned `:error`. A failed RPC still ends the span with
+    `:stop`: `:exception` is only emitted when the call raises.
 
   """
 
@@ -534,7 +547,7 @@ defmodule BroadwayCloudPubSub.Producer do
   def prepare_for_draining(state) do
     %{manager_pid: manager_pid} = state
 
-    # Single atomic call: stops the reader, nacks + clears buffered messages,
+    # Single atomic call: half-closes the stream, nacks + clears buffered messages,
     # removes them from outstanding, and sets draining mode on the StreamManager.
     {:ok, _nacked_count} = StreamManager.prepare_for_draining(manager_pid)
 
