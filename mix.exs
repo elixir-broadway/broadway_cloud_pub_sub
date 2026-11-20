@@ -63,7 +63,8 @@ defmodule BroadwayCloudPubSub.MixProject do
       extras: [
         "README.md",
         "CHANGELOG.md",
-        "docs/upgrade_to_2.0.md"
+        "docs/upgrade_to_2.0.md",
+        "docs/emulator.md"
       ],
       groups_for_modules: [
         Streaming: [

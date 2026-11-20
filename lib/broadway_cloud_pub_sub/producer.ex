@@ -171,6 +171,11 @@ defmodule BroadwayCloudPubSub.Producer do
        use_ssl: false,
        token_generator: {MyApp, :emulator_token, []}}
 
+  where `MyApp.emulator_token/0` returns `{:ok, "emulator"}`; the emulator does
+  not check the token, so Goth is not needed. See the
+  [Pub/Sub emulator guide](emulator.md) for the pull producer, switching on
+  `PUBSUB_EMULATOR_HOST`, and setting up topics and subscriptions.
+
   ## Differences from `BroadwayCloudPubSub.Pull.Producer`
 
     * **Push-based**: Messages arrive via a persistent gRPC stream rather than
@@ -388,6 +393,10 @@ defmodule BroadwayCloudPubSub.Producer do
 
     * `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :modack, :start | :stop | :exception]` -
       wraps each `ModifyAckDeadline` unary RPC call.
+
+    The `:stop` metadata also includes `:result` (`:ok` or `:error`) and, when
+    the RPC failed, the returned `:error`. A failed RPC still ends the span with
+    `:stop`: `:exception` is only emitted when the call raises.
 
   """
 

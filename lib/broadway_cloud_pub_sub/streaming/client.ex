@@ -139,7 +139,12 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   Sends an `Acknowledge` unary RPC to the Pub/Sub service.
 
   `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.AcknowledgeRequest` struct. Returns `{:ok, response}`
-  on success or `{:error, reason}` on failure. Implementations may emit telemetry spans.
+  on success or `{:error, reason}` on failure.
+
+  Implementations may emit telemetry spans. To match the default client, emit
+  `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :ack, ...]` events whose
+  `:stop` metadata includes `:result` (`:ok` or `:error`) and, on failure, `:error`.
+  See the "Telemetry" section of `BroadwayCloudPubSub.Streaming.GrpcClient`.
   """
   @callback acknowledge(channel(), request :: term(), config()) ::
               {:ok, term()} | {:error, term()}
@@ -148,8 +153,12 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
   Sends a `ModifyAckDeadline` unary RPC to the Pub/Sub service.
 
   `request` is a `BroadwayCloudPubSub.Google.Pubsub.V1.ModifyAckDeadlineRequest` struct. Returns
-  `{:ok, response}` on success or `{:error, reason}` on failure. Implementations
-  may emit telemetry spans.
+  `{:ok, response}` on success or `{:error, reason}` on failure.
+
+  Implementations may emit telemetry spans. To match the default client, emit
+  `[:broadway_cloud_pub_sub, :streaming, :grpc_client, :modack, ...]` events whose
+  `:stop` metadata includes `:result` (`:ok` or `:error`) and, on failure, `:error`.
+  See the "Telemetry" section of `BroadwayCloudPubSub.Streaming.GrpcClient`.
   """
   @callback modify_ack_deadline(channel(), request :: term(), config()) ::
               {:ok, term()} | {:error, term()}
