@@ -107,8 +107,9 @@ defmodule BroadwayCloudPubSub.Pull.Options do
       doc: """
       An MFArgs tuple that will be called before each request
       to fetch an authentication token. It should return `{:ok, String.t()} | {:error, any()}`.
-      By default this will invoke `Goth.fetch/1` with the `:goth` option.
-      See the "Custom token generator" section below for more information.
+      By default this will invoke `Goth.fetch/1` with the `:goth` option, or,
+      when `PUBSUB_EMULATOR_HOST` is set, return a placeholder token for the
+      emulator. See the "Custom token generator" section below for more information.
       """
     ],
     base_url: [
@@ -117,8 +118,9 @@ defmodule BroadwayCloudPubSub.Pull.Options do
       doc: """
       The base URL for the Cloud Pub/Sub service.
       This option is mostly useful for testing via the Pub/Sub emulator,
-      for example `"http://localhost:8085"`. See the
-      [Pub/Sub emulator guide](emulator.md).
+      for example `"http://localhost:8085"`. When the `PUBSUB_EMULATOR_HOST`
+      environment variable is set, defaults to `"http://"` followed by its
+      value. See the [Pub/Sub emulator guide](emulator.md).
       """
     ],
     finch: [
@@ -161,6 +163,21 @@ defmodule BroadwayCloudPubSub.Pull.Options do
 
   def acknowledger_definition do
     @acknowledger_definition
+  end
+
+  @doc """
+  Points the producer at the Pub/Sub emulator when `host` (by default the
+  `PUBSUB_EMULATOR_HOST` environment variable) is set, by defaulting
+  `:base_url` and `:token_generator`. Options already given are kept.
+  """
+  def put_emulator_defaults(opts, host \\ BroadwayCloudPubSub.Emulator.host())
+
+  def put_emulator_defaults(opts, nil), do: opts
+
+  def put_emulator_defaults(opts, host) do
+    opts
+    |> Keyword.put_new(:base_url, "http://" <> host)
+    |> Keyword.put_new(:token_generator, BroadwayCloudPubSub.Emulator.token_generator())
   end
 
   @doc """

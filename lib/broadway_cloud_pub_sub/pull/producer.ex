@@ -172,7 +172,10 @@ defmodule BroadwayCloudPubSub.Pull.Producer do
   def prepare_for_start(_module, broadway_opts) do
     {producer_module, client_opts} = broadway_opts[:producer][:module]
 
-    opts = NimbleOptions.validate!(client_opts, Options.definition())
+    opts =
+      client_opts
+      |> Options.put_emulator_defaults()
+      |> NimbleOptions.validate!(Options.definition())
 
     ack_ref = broadway_opts[:name]
 

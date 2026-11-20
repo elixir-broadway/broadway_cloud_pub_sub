@@ -1,13 +1,28 @@
 # Using the Pub/Sub emulator
 
 Both producers work with the local
-[Pub/Sub emulator](https://cloud.google.com/pubsub/docs/emulator). Neither
-reads the `PUBSUB_EMULATOR_HOST` environment variable on its own, so point the
-producer at the emulator with options and replace the default Goth token
-generator, since the emulator does not check credentials.
+[Pub/Sub emulator](https://cloud.google.com/pubsub/docs/emulator).
 
 The examples assume the emulator listens on `localhost:8085`, for example
 started with `gcloud beta emulators pubsub start --host-port=localhost:8085`.
+
+## `PUBSUB_EMULATOR_HOST`
+
+Like Google's client libraries, both producers read the `PUBSUB_EMULATOR_HOST`
+environment variable when the pipeline starts. When it is set, for example with
+`export PUBSUB_EMULATOR_HOST=localhost:8085`, they connect to the emulator at
+that address without TLS and use a placeholder token instead of Goth, since the
+emulator does not check credentials. An empty value counts as unset.
+
+Options you pass are kept, so the variable only fills in the ones you leave
+out: `:grpc_endpoint`, `:use_ssl` and `:token_generator` for
+`BroadwayCloudPubSub.Producer`, and `:base_url` and `:token_generator` for
+`BroadwayCloudPubSub.Pull.Producer`. A `:goth` option is ignored while the
+variable is set, so the same pipeline configuration works against the emulator
+and against Google Cloud.
+
+The rest of this guide configures the emulator with options instead, for when
+the environment variable is not convenient.
 
 ## Token generator
 
@@ -47,44 +62,6 @@ include the `http://` scheme:
  base_url: "http://localhost:8085",
  token_generator: {MyApp, :emulator_token, []}}
 ```
-
-## Switching on `PUBSUB_EMULATOR_HOST`
-
-To follow the convention of Google's client libraries, choose the options where
-the pipeline is started. Like those libraries, treat an empty value the same as
-an unset one:
-
-```elixir
-defmodule MyApp.PubSub do
-  def producer_options(subscription) do
-    case System.get_env("PUBSUB_EMULATOR_HOST") do
-      host when host in [nil, ""] ->
-        [subscription: subscription, goth: MyApp.Goth]
-
-      host ->
-        [
-          subscription: subscription,
-          grpc_endpoint: host,
-          use_ssl: false,
-          token_generator: {MyApp, :emulator_token, []}
-        ]
-    end
-  end
-end
-```
-
-Then pass them to the producer:
-
-```elixir
-producer: [
-  module:
-    {BroadwayCloudPubSub.Producer,
-     MyApp.PubSub.producer_options("projects/my-project/subscriptions/my-subscription")}
-]
-```
-
-For the pull producer, use `base_url: "http://" <> host` instead of
-`:grpc_endpoint` and `:use_ssl`.
 
 ## Things to know
 

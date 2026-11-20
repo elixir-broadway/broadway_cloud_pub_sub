@@ -163,7 +163,11 @@ defmodule BroadwayCloudPubSub.Producer do
 
   ## Pub/Sub Emulator
 
-  To use with the local Pub/Sub emulator:
+  When the `PUBSUB_EMULATOR_HOST` environment variable is set (for example to
+  `"localhost:8085"`), the producer connects to the emulator at that address
+  without TLS and without Goth. The variable only fills in the options you leave
+  out: each of `:grpc_endpoint`, `:use_ssl` and `:token_generator` that you give
+  is kept. To configure the emulator explicitly instead:
 
       {BroadwayCloudPubSub.Producer,
        subscription: "projects/my-project/subscriptions/my-subscription",
@@ -173,8 +177,8 @@ defmodule BroadwayCloudPubSub.Producer do
 
   where `MyApp.emulator_token/0` returns `{:ok, "emulator"}`; the emulator does
   not check the token, so Goth is not needed. See the
-  [Pub/Sub emulator guide](emulator.md) for the pull producer, switching on
-  `PUBSUB_EMULATOR_HOST`, and setting up topics and subscriptions.
+  [Pub/Sub emulator guide](emulator.md) for the pull producer and for setting
+  up topics and subscriptions.
 
   ## Differences from `BroadwayCloudPubSub.Pull.Producer`
 
@@ -416,6 +420,7 @@ defmodule BroadwayCloudPubSub.Producer do
       opts
       |> Keyword.put(:broadway, broadway_opts)
       |> Keyword.put(:broadway_name, broadway_opts[:name])
+      |> Options.put_emulator_defaults()
       |> validate_options!()
       |> assign_client_id()
       |> assign_token_generator()
