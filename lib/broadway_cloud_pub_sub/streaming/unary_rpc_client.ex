@@ -315,11 +315,8 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
       # deadline. AckResult decides which details are per-ack-id answers, so
       # other terminal errors (e.g. PERMISSION_DENIED with a general ErrorInfo)
       # still stop the client below.
+      # The rejected ids are reported through telemetry only, not logged.
       :terminal when per_ack_errors != %{} ->
-        Logger.warning(
-          "Cloud Pub/Sub rejected some ack ids while trying to #{operation} via gRPC - reason: #{inspect(error)}"
-        )
-
         transient_ids = drop_permanent_failures(state, ack_ids, per_ack_errors)
         {:reply, {:error, {error, transient_ids}}, state}
 

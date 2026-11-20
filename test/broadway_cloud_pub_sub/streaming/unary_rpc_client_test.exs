@@ -677,7 +677,6 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
     # INVALID_ARGUMENT and an ErrorInfo detail listing them. The status is
     # terminal, but stopping on it made the client crash-loop on every resend
     # of the batch until the ack retry deadline.
-    @tag capture_log: true
     test "terminal status with per-ack-id ErrorInfo counts permanent ids and keeps running" do
       test_pid = self()
       telemetry_name = "unary-eod-permanent-#{System.unique_integer([:positive])}"
@@ -727,8 +726,8 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
           assert "ack-unlisted" in retained
         end)
 
-      assert log =~
-               "Cloud Pub/Sub rejected some ack ids while trying to acknowledge messages via gRPC"
+      # Reported through telemetry only: the library does not log it.
+      assert log == ""
 
       assert_receive {:permanent_failure, %{count: 1}, %{subscription: _}}, 1_000
       refute_received {:DOWN, ^ref, :process, ^pid, _reason}

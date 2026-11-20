@@ -14,8 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch to the restarted client, which stopped again, until the ack retry
   deadline. A terminal status with per-ack-id details is now handled like a
   retryable one: the permanently failed ids are counted on
-  `[:broadway_cloud_pub_sub, :streaming, :unary, :permanent_failure]`, a
-  warning is logged, and the client keeps running. Only an `ErrorInfo` with
+  `[:broadway_cloud_pub_sub, :streaming, :unary, :permanent_failure]` and the
+  client keeps running, without logging. Only an `ErrorInfo` with
   reason `EXACTLY_ONCE_ACKID_FAILURE` counts as per-ack-id details, so other
   terminal errors, such as `PERMISSION_DENIED`, still stop the client.
 
