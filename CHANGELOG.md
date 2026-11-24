@@ -14,6 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fills in the options you leave out: each connection or `:token_generator`
   option that is given is kept.
 
+### Changed
+
+- In the streaming producer, a `:noop` acknowledgement (`on_success` or
+  `on_failure`) now releases the message from lease management. Pub/Sub
+  redelivers it once the ack deadline from its last lease extension expires,
+  which the producer sets (10 to 600 seconds), not the subscription's
+  `ackDeadlineSeconds`. Previously its lease kept being extended until
+  `:max_extension_ms` (default 60 minutes), and a shutdown before then nacked
+  it per `:on_shutdown`.
+
+### Fixed
+
+- Unary acknowledgements and ack deadline modifications now fetch a fresh token
+  on every call instead of using the token from when the channel was opened, so
+  a long-lived channel no longer fails with `UNAUTHENTICATED` after the token
+  expires.
+
+- Fix the streaming producer's StreamManager crashing with an
+  `ArithmeticError` when an ack, nack or lease extension arrived after a
+  graceful drain had timed out. A drain now also completes when the last
+  outstanding message's lease expires (a message past `:max_extension_ms`),
+  instead of waiting for `:drain_timeout_ms` and reporting a timeout.
+
 ## [2.1.0]
 
 ### Added
