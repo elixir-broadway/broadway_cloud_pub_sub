@@ -22,11 +22,16 @@ defmodule BroadwayCloudPubSub.Streaming.AckResult do
   # when an Acknowledge or ModifyAckDeadline RPC partially fails. The errors are
   # encoded in a `google.rpc.Status` detail of type `google.rpc.ErrorInfo`:
   #
-  #   - `reason` field: either "TRANSIENT_<details>" (retry) or "PERMANENT_<details>"
-  #   - `metadata` map: keys are ack_ids, values are the per-ack-id error reason
+  #   - `reason` field: "EXACTLY_ONCE_ACKID_FAILURE"
+  #   - `metadata` map: keys are ack_ids, values are the per-ack-id error reason,
+  #     either "TRANSIENT_<details>" (retry) or "PERMANENT_<details>"
   #
   # Transient errors should be retried; permanent errors indicate an invalid ack ID
   # and should be resolved immediately with the appropriate status.
+  #
+  # An ErrorInfo with any other reason is a general error detail (for example
+  # "IAM_PERMISSION_DENIED" with a "permission" key in its metadata), not a
+  # per-ack-ID answer, and is ignored.
   #
   # ## Status values
   #
@@ -53,6 +58,9 @@ defmodule BroadwayCloudPubSub.Streaming.AckResult do
 
   defstruct [:ack_id, :status, :error]
 
+  # The ErrorInfo reason Pub/Sub uses for per-ack-ID answers.
+  @ack_id_failure_reason "EXACTLY_ONCE_ACKID_FAILURE"
+
   @doc """
   Returns a successful AckResult for the given ack_id.
   """
@@ -70,9 +78,11 @@ defmodule BroadwayCloudPubSub.Streaming.AckResult do
   Parses per-ack-ID error information from a `GRPC.RPCError`'s details list.
 
   Google's Pub/Sub API encodes per-ack-ID errors in `google.rpc.ErrorInfo` details
-  when an Acknowledge or ModifyAckDeadline RPC partially fails. The `metadata` map
-  in `ErrorInfo` maps ack_id => error_reason, where the reason has either a
-  "TRANSIENT_" or "PERMANENT_" prefix.
+  when an Acknowledge or ModifyAckDeadline RPC partially fails. Only an
+  `ErrorInfo` whose reason is "EXACTLY_ONCE_ACKID_FAILURE" carries them: its
+  `metadata` map maps ack_id => error_reason, where the reason has either a
+  "TRANSIENT_" or "PERMANENT_" prefix. `ErrorInfo` details with any other reason
+  are ignored.
 
   Returns a map of `ack_id => :transient | {:permanent, reason_string}`.
 
@@ -87,7 +97,8 @@ defmodule BroadwayCloudPubSub.Streaming.AckResult do
   def parse_error_details(details) when is_list(details) do
     Enum.reduce(details, %{}, fn any_proto, acc ->
       case decode_error_info(any_proto) do
-        {:ok, %Google.Rpc.ErrorInfo{metadata: metadata}} when map_size(metadata) > 0 ->
+        {:ok, %Google.Rpc.ErrorInfo{reason: @ack_id_failure_reason, metadata: metadata}}
+        when map_size(metadata) > 0 ->
           Enum.reduce(metadata, acc, fn {ack_id, reason}, inner_acc ->
             Map.put(inner_acc, ack_id, classify_reason(reason))
           end)

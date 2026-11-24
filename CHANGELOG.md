@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outstanding message's lease expires (a message past `:max_extension_ms`),
   instead of waiting for `:drain_timeout_ms` and reporting a timeout.
 
+- Fix the streaming producer's unary RPC client crash-looping on exactly-once
+  subscriptions. Pub/Sub rejects expired or invalid ack ids with
+  `INVALID_ARGUMENT` and lists them in an `ErrorInfo` detail; that status was
+  treated as terminal, so the client stopped, and `AckBatcher` sent the same
+  batch to the restarted client, which stopped again, until the ack retry
+  deadline. A terminal status with per-ack-id details is now handled like a
+  retryable one: the permanently failed ids are counted on
+  `[:broadway_cloud_pub_sub, :streaming, :unary, :permanent_failure]` and the
+  client keeps running, without logging. Only an `ErrorInfo` with
+  reason `EXACTLY_ONCE_ACKID_FAILURE` counts as per-ack-id details, so other
+  terminal errors, such as `PERMISSION_DENIED`, still stop the client.
+
 ## [2.1.0]
 
 ### Added
