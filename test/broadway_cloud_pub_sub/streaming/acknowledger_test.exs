@@ -12,6 +12,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
   # Acknowledger calls:
   #   StreamManager.acknowledge(pid, ack_ids)   → GenServer.cast({:acknowledge, ack_ids})
   #   StreamManager.modify_deadline(pid, ack_ids, deadline) → GenServer.cast(...)
+  #   StreamManager.release(pid, ack_ids)       → GenServer.cast({:release, ack_ids})
   #
   # We spin up a tiny GenServer that forwards casts to the test process.
 
@@ -31,6 +32,11 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
 
     def handle_cast({:modify_deadline, ack_ids, deadline}, test_pid) do
       send(test_pid, {:modify_deadline, ack_ids, deadline})
+      {:noreply, test_pid}
+    end
+
+    def handle_cast({:release, ack_ids}, test_pid) do
+      send(test_pid, {:release, ack_ids})
       {:noreply, test_pid}
     end
   end
@@ -98,7 +104,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       assert Enum.sort(ack_ids) == ["id-1", "id-2"]
     end
 
-    test "does not ack failed messages when on_failure is :noop", %{
+    test "releases failed messages without acking them when on_failure is :noop", %{
       ack_ref: ack_ref,
       stub_pid: stub_pid
     } do
@@ -109,6 +115,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       Acknowledger.ack(ack_ref, success, failure)
 
       assert_receive {:acknowledge, ["ok-1"]}
+      assert_receive {:release, ["fail-1"]}
       refute_receive {:acknowledge, _}
       refute_receive {:modify_deadline, _, _}
     end
@@ -123,7 +130,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       assert_receive {:modify_deadline, ["fail-1"], 0}
     end
 
-    test "does not send anything when on_success is :noop", %{
+    test "only releases successful messages when on_success is :noop", %{
       ack_ref: ack_ref,
       stub_pid: stub_pid
     } do
@@ -131,6 +138,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       msgs = [build_message("id-1", ack_ref)]
       Acknowledger.ack(ack_ref, msgs, [])
 
+      assert_receive {:release, ["id-1"]}
       refute_receive {:acknowledge, _}
       refute_receive {:modify_deadline, _, _}
     end
@@ -177,6 +185,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       Acknowledger.ack(ack_ref, [noop_msg, ack_msg], [])
 
       assert_receive {:acknowledge, ["ack-id"]}
+      assert_receive {:release, ["noop-id"]}
       # noop-id must not appear in any acknowledge message
       refute_receive {:acknowledge, _}
     end
@@ -188,6 +197,7 @@ defmodule BroadwayCloudPubSub.Streaming.AcknowledgerTest do
       Acknowledger.ack(ack_ref, [], [nack_msg, noop_msg])
 
       assert_receive {:modify_deadline, ["nack-id"], 10}
+      assert_receive {:release, ["noop-id"]}
       refute_receive {:modify_deadline, _, _}
     end
   end

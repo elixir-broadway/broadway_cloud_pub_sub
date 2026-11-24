@@ -718,6 +718,67 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       assert map_size(state.outstanding) == 0
       assert state.drain_timer == nil
     end
+
+    test "drain completes when the last outstanding lease expires" do
+      # max_extension_ms: 1 makes the in-flight message expire on the next
+      # lease extension, as a message still being processed does after max_extension_ms.
+      # Other async tests emit the same events; tag this manager's.
+      tag = make_ref()
+
+      pid =
+        start_manager(
+          drain_timeout_ms: 5_000,
+          max_extension_ms: 1,
+          telemetry_metadata: %{test_ref: tag}
+        )
+
+      test_pid = self()
+      telemetry_name = "test-drain-stop-lease-expired-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        telemetry_name,
+        [:broadway_cloud_pub_sub, :streaming, :stream, :drain, :stop],
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :drain_stop}
+      )
+
+      on_exit(fn -> :telemetry.detach(telemetry_name) end)
+
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("expiring", "data")]})
+      assert_receive {:stream_messages, _}, 500
+
+      {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      Process.sleep(5)
+      send(pid, :extend_leases)
+
+      assert_receive {:drain_stop, _measurements, %{extra: %{test_ref: ^tag}}}, 500
+
+      state = :sys.get_state(pid)
+      assert map_size(state.outstanding) == 0
+      assert state.drain_timer == nil
+    end
+
+    test "acks and lease extensions after drain_timeout do not crash the manager" do
+      pid = start_manager(drain_timeout_ms: 50)
+      ref = Process.monitor(pid)
+
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("late-ack", "data")]})
+      assert_receive {:stream_messages, _}, 500
+
+      {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      Process.sleep(150)
+      assert :sys.get_state(pid).drain_timer == nil
+
+      # A slow processor acks after the drain timed out, then the lease timer fires.
+      StreamManager.acknowledge(pid, ["late-ack"])
+      send(pid, :extend_leases)
+      Process.sleep(50)
+
+      refute_received {:DOWN, ^ref, :process, ^pid, _}
+      assert Process.alive?(pid)
+    end
   end
 
   # ============================================================
@@ -2125,6 +2186,80 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManagerTest do
       state = :sys.get_state(pid)
       assert map_size(state.outstanding) == 0
       # Drain should have completed: timer cancelled
+      assert state.drain_timer == nil
+    end
+  end
+
+  # ============================================================
+  # release: :noop acknowledgements leave lease management
+  # ============================================================
+
+  describe "release/2" do
+    test "removes ack_ids from outstanding so their leases are no longer extended" do
+      # Other async tests emit the same events; tag this manager's.
+      tag = make_ref()
+      pid = start_manager(telemetry_metadata: %{test_ref: tag})
+      test_pid = self()
+      telemetry_name = "test-release-extend-leases-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach(
+        telemetry_name,
+        [:broadway_cloud_pub_sub, :streaming, :stream, :extend_leases],
+        &TelemetryHelper.handle_event_forward_test/4,
+        %{pid: test_pid, msg: :extend_leases}
+      )
+
+      on_exit(fn -> :telemetry.detach(telemetry_name) end)
+
+      StreamManager.notify_demand(pid, 10)
+
+      send(
+        pid,
+        {:stream_messages, [received_message("noop-1", "a"), received_message("kept-1", "b")]}
+      )
+
+      assert_receive {:stream_messages, [_, _]}, 500
+
+      StreamManager.release(pid, ["noop-1"])
+      assert StreamManager.get_outstanding(pid) == ["kept-1"]
+
+      send(pid, :extend_leases)
+      assert_receive {:extend_leases, %{count: 1}, %{extra: %{test_ref: ^tag}}}, 500
+    end
+
+    test "records the processing time like an ack or nack" do
+      pid = start_manager()
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("noop-dist", "data")]})
+      assert_receive {:stream_messages, [_]}, 500
+
+      dist_before = :sys.get_state(pid).ack_time_dist
+      StreamManager.release(pid, ["noop-dist"])
+      sync(pid)
+
+      refute :sys.get_state(pid).ack_time_dist == dist_before
+    end
+
+    test "unknown ack_ids are ignored" do
+      pid = start_manager()
+      StreamManager.release(pid, ["never-received"])
+      assert StreamManager.get_outstanding(pid) == []
+    end
+
+    test "release during drain allows drain to complete" do
+      pid = start_manager(drain_timeout_ms: 5_000)
+      StreamManager.notify_demand(pid, 10)
+      send(pid, {:stream_messages, [received_message("drain-noop", "data")]})
+      assert_receive {:stream_messages, [_]}, 500
+
+      {:ok, 0} = StreamManager.prepare_for_draining(pid)
+      assert :sys.get_state(pid).drain_timer != nil
+
+      StreamManager.release(pid, ["drain-noop"])
+      sync(pid)
+
+      state = :sys.get_state(pid)
+      assert map_size(state.outstanding) == 0
       assert state.drain_timer == nil
     end
   end
