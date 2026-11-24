@@ -68,8 +68,14 @@ defmodule BroadwayCloudPubSub.Producer do
   Supported values:
 
     * `:ack` - acknowledge the message; Pub/Sub removes it from the subscription.
-    * `:noop` - do nothing; the message is redelivered after the subscription's
-      `ackDeadlineSeconds` expires.
+    * `:noop` - send nothing to Pub/Sub and stop extending the message's lease.
+      Pub/Sub redelivers the message once the ack deadline from its last lease
+      extension expires. The producer sets that deadline (see
+      [Lease management](#module-lease-management)), not the subscription's
+      `ackDeadlineSeconds`, so it is anywhere from 10 to 600 seconds. Until
+      then, the server counts the message towards `:max_outstanding_messages`
+      and `:max_outstanding_bytes`. Prefer `{:nack, seconds}` when you want a
+      predictable redelivery delay.
     * `:nack` - equivalent to `{:nack, 0}`; makes the message immediately
       available for redelivery.
     * `{:nack, seconds}` - sets `ackDeadlineSeconds` to `seconds` for the
@@ -100,7 +106,8 @@ defmodule BroadwayCloudPubSub.Producer do
   the AckBatcher. The extension interval is derived from the effective ack
   deadline with randomized jitter to spread out RPC calls.
 
-  Messages are tracked until they are acknowledged, nacked, or until
+  Messages are tracked until they are acknowledged, nacked, released by a
+  `:noop` acknowledgement, or until
   `:max_extension_ms` elapses (default 60 minutes), after which the server
   redelivers them. This prevents a stuck consumer from holding messages
   indefinitely. The `extend_leases` and `lease_expired` telemetry events
@@ -132,17 +139,27 @@ defmodule BroadwayCloudPubSub.Producer do
 
   ## Graceful shutdown
 
-  On shutdown, the producer:
+  On shutdown, Broadway asks the producer to drain, then waits for the
+  processors and batchers to finish their in-flight messages (bounded by
+  Broadway's own `:shutdown` option). The producer:
 
     1. Nacks all buffered messages (received but not yet dispatched to
        processors) per the `:on_shutdown` option (default `{:nack, 5}`).
     2. Half-closes the gRPC stream so the server stops sending new messages.
        If the gRPC client does not implement the optional `close_send/2`
        callback, or the half-close fails, the stream is cancelled and its
-       connection closed instead.
-    3. Waits up to `:drain_timeout_ms` (default 30s) for in-flight messages
-       (dispatched to processors but not yet acked/nacked) to be processed.
-    4. Cancels the stream after the drain timeout.
+       connection closed instead. Acks and nacks use a separate unary
+       channel, so in-flight messages can still be acked or nacked.
+    3. Closes the stream as soon as no messages are outstanding.
+    4. Once the processors and batchers have finished, nacks every message
+       still outstanding per `:on_shutdown` and closes the stream. Messages
+       already released by a `:noop` acknowledgement are not outstanding, so
+       they are left to expire at their current ack deadline.
+
+  `:drain_timeout_ms` (default 30s) only matters when the processors take
+  longer than that to finish. When it elapses, the producer nacks the
+  outstanding messages per `:on_shutdown` and cancels the stream early, so
+  messages still being processed may be redelivered.
 
   The drain lifecycle is tracked via the `drain` telemetry span
   (see [Telemetry](#module-telemetry)).
@@ -546,8 +563,9 @@ defmodule BroadwayCloudPubSub.Producer do
     if Process.alive?(manager_pid) do
       # Nack any messages still in outstanding so they are redelivered promptly
       # instead of waiting for their ack deadline to expire naturally. This
-      # covers edge cases like on_failure: :noop (acknowledger does nothing) or
-      # the drain timeout firing before all processors complete.
+      # covers edge cases like the drain timeout firing before all processors
+      # complete. Messages released by a :noop acknowledgement are no longer
+      # outstanding, so they are left to expire at their current deadline.
       #
       # nack_ack_ids sends a cast to StreamManager (which routes to AckBatcher),
       # then close/1 calls flush_batcher_if_alive. Since the cast is enqueued

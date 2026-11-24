@@ -148,7 +148,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
     }
 
     # Open initial channel immediately.
-    case state.grpc_client.connect(state.grpc_client_config) do
+    case state.grpc_client.connect(unary_config(state.grpc_client_config)) do
       {:ok, channel} ->
         {:ok, %{state | channel: channel}}
 
@@ -194,7 +194,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
     state = %{state | reconnect_pending: false}
     state = disconnect_channel(state)
 
-    case state.grpc_client.connect(state.grpc_client_config) do
+    case state.grpc_client.connect(unary_config(state.grpc_client_config)) do
       {:ok, channel} ->
         emit_telemetry(:connect, %{}, state.config)
         backoff = Backoff.reset(state.backoff)
@@ -229,6 +229,9 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  # Unary RPCs authenticate per call, so their channel carries no token.
+  defp unary_config(config), do: Map.put(config, :auth, :per_call)
 
   # Resolves the held channel's owning pid via the configured grpc_client.
   # Returns nil if no channel is held (so an EXIT signal can never match) or
@@ -335,7 +338,7 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClient do
   end
 
   defp ensure_channel(%{channel: nil} = state) do
-    case state.grpc_client.connect(state.grpc_client_config) do
+    case state.grpc_client.connect(unary_config(state.grpc_client_config)) do
       {:ok, channel} -> %{state | channel: channel}
       {:error, _} -> state
     end

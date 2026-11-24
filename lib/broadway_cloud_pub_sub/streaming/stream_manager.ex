@@ -97,6 +97,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
   end
 
   @doc """
+  Stops lease management for a list of ack_ids without sending anything to
+  Pub/Sub. Used for the `:noop` acknowledgement action.
+
+  The messages are no longer lease-extended, so Pub/Sub redelivers them once
+  their current ack deadline expires. Until then the server still counts them
+  towards the stream's flow-control limits.
+  """
+  @spec release(pid(), [String.t()]) :: :ok
+  def release(pid, ack_ids) when is_list(ack_ids) do
+    GenServer.cast(pid, {:release, ack_ids})
+  end
+
+  @doc """
   Prepares the StreamManager for graceful shutdown. Called from the
   producer's `prepare_for_draining/1`. Atomically:
 
@@ -443,6 +456,11 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     handle_disconnect(state, :connection_down)
   end
 
+  # The drain completed after the timer had already fired; nothing left to do.
+  def handle_info(:drain_timeout, %{drain_started_at: nil} = state) do
+    {:noreply, state}
+  end
+
   def handle_info(:drain_timeout, state) do
     outstanding_ids = Map.keys(state.outstanding)
 
@@ -501,6 +519,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     state = %{state | outstanding: new_outstanding, ack_time_dist: new_dist}
 
     AckBatcher.modack(state.ack_batcher, ack_ids, deadline_seconds)
+
+    {:noreply, maybe_complete_drain(state)}
+  end
+
+  # A :noop acknowledgement: stop extending the lease and let the current ack
+  # deadline lapse, so Pub/Sub redelivers the message. Nothing is sent to the
+  # server. Removing it from outstanding also means the drain no longer waits
+  # for it and terminate/2 does not nack it per on_shutdown.
+  def handle_cast({:release, ack_ids}, state) do
+    {new_outstanding, new_dist} =
+      MessageDispatch.record_and_remove(state.outstanding, state.ack_time_dist, ack_ids, now_ms())
+
+    state = %{state | outstanding: new_outstanding, ack_time_dist: new_dist}
 
     {:noreply, maybe_complete_drain(state)}
   end
@@ -887,7 +918,14 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
       emit_telemetry(:receipt_modack_stale, %{count: length(stale_ack_ids)}, state.config)
     end
 
-    %{state | outstanding: valid, lease_timer: timer, pending_receipt_modacks: fresh}
+    # Expired leases leave outstanding, so during a drain this may have
+    # removed the last message the drain was waiting for.
+    maybe_complete_drain(%{
+      state
+      | outstanding: valid,
+        lease_timer: timer,
+        pending_receipt_modacks: fresh
+    })
   end
 
   # --- Private: lease timer management ---
@@ -941,12 +979,19 @@ defmodule BroadwayCloudPubSub.Streaming.StreamManager do
     %{state | drain_timer: nil}
   end
 
-  # After each ack/nack, check if we are draining and all outstanding messages
-  # have been resolved. If so, cancel the drain timer and close the stream.
+  # After each ack/nack or lease expiry, check if we are draining and all
+  # outstanding messages have been resolved. If so, cancel the drain timer and
+  # close the stream. A nil drain_started_at means the drain already ended
+  # (completed or timed out), so later acks and lease ticks do nothing here.
   defp maybe_complete_drain(
-         %{draining: true, outstanding: outstanding, pending_receipt_modacks: pending} = state
+         %{
+           draining: true,
+           drain_started_at: started_at,
+           outstanding: outstanding,
+           pending_receipt_modacks: pending
+         } = state
        )
-       when map_size(outstanding) == 0 and map_size(pending) == 0 do
+       when started_at != nil and map_size(outstanding) == 0 and map_size(pending) == 0 do
     # AckBatcher may already be down during pipeline shutdown.
     flush_batcher_if_alive(state.ack_batcher)
 
