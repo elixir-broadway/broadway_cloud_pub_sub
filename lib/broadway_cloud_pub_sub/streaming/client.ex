@@ -59,6 +59,12 @@ defmodule BroadwayCloudPubSub.Streaming.Client do
 
   Called by `StreamManager` and `UnaryRpcClient` before each (re)connection.
   Should handle token fetching, TLS setup, and adapter selection internally.
+
+  `StreamManager` connects with the config as is. `UnaryRpcClient` adds
+  `auth: :per_call` to the config: the channel should then carry no credentials,
+  and the `acknowledge/3` and `modify_ack_deadline/3` callbacks should attach a
+  freshly fetched token to every call, because that channel outlives any token.
+  The default `GrpcClient` does this with the `:token_generator` option.
   Returns `{:ok, channel}` on success or `{:error, reason}` on failure.
   """
   @callback connect(config()) :: {:ok, channel()} | {:error, reason :: term()}

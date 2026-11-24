@@ -35,6 +35,32 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClientTest do
     def call(_stream, _request, _next, result), do: result
   end
 
+  def static_token, do: {:ok, "static"}
+  def next_token(counter), do: {:ok, "token-#{Agent.get_and_update(counter, &{&1 + 1, &1 + 1})}"}
+
+  # Reports the request headers the adapter would put on the wire.
+  defmodule HeaderAdapter do
+    @behaviour GRPC.Client.Adapter
+
+    def connect(channel, opts) do
+      {:ok, %{channel | adapter_payload: %{conn_pid: self(), test_pid: opts[:test_pid]}}}
+    end
+
+    def disconnect(channel), do: {:ok, channel}
+    def send_headers(stream, _opts), do: stream
+    def send_data(stream, _message, _opts), do: stream
+    def end_stream(stream), do: stream
+    def cancel(_stream), do: :ok
+
+    def send_request(stream, _message, opts) do
+      headers = GRPC.Transport.HTTP2.client_headers_without_reserved(stream, opts)
+      send(stream.channel.adapter_payload.test_pid, {:request_headers, headers})
+      stream
+    end
+
+    def receive_data(_stream, _opts), do: {:ok, %Google.Protobuf.Empty{}}
+  end
+
   @subscription "projects/p/subscriptions/s"
 
   # Other async tests run the real GrpcClient too, so each test uses its own
@@ -55,7 +81,13 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClientTest do
       on_exit(fn -> :telemetry.detach(handler_id) end)
     end
 
-    %{config: %{broadway_name: name, subscription: @subscription}, name: name}
+    config = %{
+      broadway_name: name,
+      subscription: @subscription,
+      token_generator: {__MODULE__, :static_token, []}
+    }
+
+    %{config: config, name: name}
   end
 
   defp channel(result) do
@@ -122,4 +154,68 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClientTest do
       refute_received {{:modack, :exception}, _, %{name: ^name}}
     end
   end
+
+  describe "per-call token" do
+    setup %{config: config} do
+      counter = start_supervised!({Agent, fn -> 0 end})
+      config = Map.put(config, :token_generator, {__MODULE__, :next_token, [counter]})
+      %{config: config}
+    end
+
+    defp open_header_channel(config, extra \\ %{}) do
+      {:ok, channel} =
+        config
+        |> Map.merge(%{
+          grpc_endpoint: "localhost:1",
+          use_ssl: false,
+          adapter: HeaderAdapter,
+          test_pid: self()
+        })
+        |> Map.merge(extra)
+        |> GrpcClient.connect()
+
+      channel
+    end
+
+    defp auth_headers(headers), do: for({"authorization", v} <- headers, do: v)
+
+    test "unary calls send the latest token and none from the channel", %{config: config} do
+      channel = open_header_channel(config, %{auth: :per_call})
+      assert channel.headers == []
+
+      assert {:ok, _} =
+               GrpcClient.acknowledge(channel, %AcknowledgeRequest{ack_ids: ["a"]}, config)
+
+      assert_receive {:request_headers, h1}
+      assert auth_headers(h1) == ["Bearer token-1"]
+
+      request = %ModifyAckDeadlineRequest{ack_ids: ["a"], ack_deadline_seconds: 10}
+      assert {:ok, _} = GrpcClient.modify_ack_deadline(channel, request, config)
+      assert_receive {:request_headers, h2}
+      assert auth_headers(h2) == ["Bearer token-2"]
+
+      assert {:ok, _} =
+               GrpcClient.acknowledge(channel, %AcknowledgeRequest{ack_ids: ["a"]}, config)
+
+      assert_receive {:request_headers, h3}
+      assert auth_headers(h3) == ["Bearer token-3"]
+    end
+
+    test "the stream channel keeps the connect-time token", %{config: config} do
+      channel = open_header_channel(config)
+      assert channel.headers == [{"authorization", "Bearer token-1"}]
+    end
+
+    test "a token fetch failure is returned and the RPC is not sent", %{config: config} do
+      config = %{config | token_generator: {__MODULE__, :failing_token, []}}
+      channel = open_header_channel(config, %{auth: :per_call})
+
+      assert {:error, :no_token} =
+               GrpcClient.acknowledge(channel, %AcknowledgeRequest{ack_ids: ["a"]}, config)
+
+      refute_received {:request_headers, _}
+    end
+  end
+
+  def failing_token, do: {:error, :no_token}
 end

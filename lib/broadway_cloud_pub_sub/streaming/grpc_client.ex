@@ -50,6 +50,12 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
   end
 
   @impl BroadwayCloudPubSub.Streaming.Client
+  def connect(%{auth: :per_call} = config) do
+    open_channel(config, nil)
+  rescue
+    e -> {:error, {:connect_failed, Exception.message(e)}}
+  end
+
   def connect(config) do
     with {:ok, token} <- fetch_token(config) do
       open_channel(config, token)
@@ -123,7 +129,7 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       :ack,
       metadata,
       fn ->
-        result = Stub.acknowledge(channel, request, timeout: @unary_rpc_timeout_ms)
+        result = unary(&Stub.acknowledge/3, channel, request, config)
 
         {result, stop_metadata(metadata, result)}
       end,
@@ -145,12 +151,34 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
       :modack,
       metadata,
       fn ->
-        result = Stub.modify_ack_deadline(channel, request, timeout: @unary_rpc_timeout_ms)
+        result = unary(&Stub.modify_ack_deadline/3, channel, request, config)
 
         {result, stop_metadata(metadata, result)}
       end,
       Map.get(config, :telemetry_metadata)
     )
+  end
+
+  # The token is fetched on every call and sent as call metadata, so a
+  # long-lived channel never uses an expired token. The channel for these calls
+  # is opened with `auth: :per_call`, which leaves out the default header.
+  defp unary(rpc, channel, request, config) do
+    with {:ok, token} <- safe_fetch_token(config) do
+      rpc.(channel, request,
+        timeout: @unary_rpc_timeout_ms,
+        metadata: %{"authorization" => "Bearer #{token}"}
+      )
+    end
+  end
+
+  defp safe_fetch_token(config) do
+    case fetch_token(config) do
+      {:ok, _} = ok -> ok
+      {:error, _} = error -> error
+      other -> {:error, {:token_fetch_failed, other}}
+    end
+  rescue
+    e -> {:error, {:token_fetch_failed, Exception.message(e)}}
   end
 
   # A failed RPC is returned, not raised, so the span ends with `:stop`.
@@ -187,10 +215,14 @@ defmodule BroadwayCloudPubSub.Streaming.GrpcClient do
 
     base_opts = [
       adapter: adapter,
-      headers: [{"authorization", "Bearer #{token}"}],
       adapter_opts: adapter_opts,
       interceptors: interceptors
     ]
+
+    base_opts =
+      if token,
+        do: Keyword.put(base_opts, :headers, [{"authorization", "Bearer #{token}"}]),
+        else: base_opts
 
     opts =
       if use_ssl do
