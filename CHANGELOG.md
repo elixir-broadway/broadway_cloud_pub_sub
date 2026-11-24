@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unary acknowledgements and ack deadline modifications now fetch a fresh token
+  on every call instead of using the token from when the channel was opened, so
+  a long-lived channel no longer fails with `UNAUTHENTICATED` after the token
+  expires.
+
 - Fix the streaming producer's StreamManager crashing with an
   `ArithmeticError` when an ack, nack or lease extension arrived after a
   graceful drain had timed out. A drain now also completes when the last

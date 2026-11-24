@@ -61,12 +61,21 @@ defmodule BroadwayCloudPubSub.Streaming.UnaryRpcClientTest do
   # Token generator that returns an error — causes open_channel to fail
   # immediately without attempting a TCP connection.
   def fail_token, do: {:error, :no_token}
+
+  # Unary channels carry no token, so a failing connect needs its own client.
+  defmodule DownClient do
+    def init(opts), do: {:ok, Map.new(opts)}
+    def connect(_config), do: {:error, {:connect_failed, :down}}
+    def disconnect(_channel, _config), do: :ok
+    def connection_pid(_channel), do: nil
+  end
+
   def noop_token, do: {:ok, "test-token"}
 
   defp start_client_no_channel(extra_opts \\ []) do
     opts = Keyword.merge(base_config_bad_token(), extra_opts)
     # Mirror what Producer.prepare_for_start/2 does: derive grpc_client_config.
-    grpc_client = Keyword.get(opts, :grpc_client, BroadwayCloudPubSub.Streaming.GrpcClient)
+    grpc_client = Keyword.get(opts, :grpc_client, DownClient)
     {:ok, grpc_client_config} = grpc_client.init(opts)
 
     opts =
