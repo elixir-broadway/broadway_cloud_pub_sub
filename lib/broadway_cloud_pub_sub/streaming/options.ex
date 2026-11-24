@@ -42,7 +42,9 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       doc: """
       An MFArgs tuple that will be called before each gRPC connection to fetch
       an authentication token. Should return `{:ok, String.t()} | {:error, any()}`.
-      By default this will invoke `Goth.fetch/1` with the `:goth` option.
+      By default this will invoke `Goth.fetch/1` with the `:goth` option, or,
+      when `PUBSUB_EMULATOR_HOST` is set, return a placeholder token for the
+      emulator.
       """
     ],
 
@@ -268,7 +270,8 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       default: @default_grpc_endpoint,
       doc: """
       The gRPC endpoint for the Cloud Pub/Sub service. Useful for testing
-      with the Pub/Sub emulator (e.g., `"localhost:8085"`).
+      with the Pub/Sub emulator (e.g., `"localhost:8085"`). When the
+      `PUBSUB_EMULATOR_HOST` environment variable is set, defaults to its value.
       """
     ],
     use_ssl: [
@@ -277,6 +280,8 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
       doc: """
       Whether to use TLS when connecting to the gRPC endpoint. Set to `false`
       when connecting to the Pub/Sub emulator, which does not use TLS.
+      Defaults to `false` when the `PUBSUB_EMULATOR_HOST` environment
+      variable is set.
       """
     ],
     keepalive_interval_ms: [
@@ -361,6 +366,23 @@ defmodule BroadwayCloudPubSub.Streaming.Options do
 
   def acknowledger_definition do
     @acknowledger_definition
+  end
+
+  @doc """
+  Points the producer at the Pub/Sub emulator when `host` (by default the
+  `PUBSUB_EMULATOR_HOST` environment variable) is set, by defaulting
+  `:grpc_endpoint`, `:use_ssl` and `:token_generator`. Options already given
+  are kept.
+  """
+  def put_emulator_defaults(opts, host \\ BroadwayCloudPubSub.Emulator.host())
+
+  def put_emulator_defaults(opts, nil), do: opts
+
+  def put_emulator_defaults(opts, host) do
+    opts
+    |> Keyword.put_new(:grpc_endpoint, host)
+    |> Keyword.put_new(:use_ssl, false)
+    |> Keyword.put_new(:token_generator, BroadwayCloudPubSub.Emulator.token_generator())
   end
 
   @doc """
